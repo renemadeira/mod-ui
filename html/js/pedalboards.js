@@ -1,19 +1,5 @@
-/*
- * Copyright 2012-2013 AGR Audio, Industria e Comercio LTDA. <contato@moddevices.com>
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2012-2023 MOD Audio UG
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 function PedalboardSearcher(opt) {
     var self = this
@@ -88,6 +74,14 @@ function PedalboardSearcher(opt) {
             self.search()
         }, 400)
     })
+    this.searchbox.on('cut', function(e) {
+        if (self.lastKeyTimeout != null) {
+            clearTimeout(self.lastKeyTimeout)
+        }
+        self.lastKeyTimeout = setTimeout(function () {
+            self.search()
+        }, 400);
+    })
     this.searchbox.on('paste', function(e) {
         if (self.lastKeyTimeout != null) {
             clearTimeout(self.lastKeyTimeout)
@@ -124,7 +118,8 @@ JqueryClass('pedalboardBox', {
         var self = $(this)
 
         options = $.extend({
-            resultCanvas: self.find('.js-pedalboards'),
+            resultCanvasUser: self.find('.js-user-pedalboards'),
+            resultCanvasFactory: self.find('.js-factory-pedalboards'),
             viewModes: self.find('.view-modes'),
             viewModeList: self.find('#view-mode-list'),
             viewModeGrid: self.find('#view-mode-grid'),
@@ -161,7 +156,8 @@ JqueryClass('pedalboardBox', {
                 self.pedalboardBox('showPedalboard', pedalboard)
             },
             cleanResults: function () {
-                self.data('resultCanvas').html('')
+                self.data('resultCanvasUser').html('')
+                self.data('resultCanvasFactory').html('')
                 self.data('results', {})
             }
         }, options))
@@ -179,20 +175,23 @@ JqueryClass('pedalboardBox', {
             self.window('close')
         })
 
-        options.viewModes.pedalboardsModeSelector(options.resultCanvas, options.saveConfigValue)
+        options.viewModes.pedalboardsModeSelector(options.resultCanvasUser,
+                                                  options.resultCanvasFactory,
+                                                  options.saveConfigValue)
 
         return self
     },
 
     initViewMode: function (viewMode) {
-      var self = $(this)
-      if (viewMode === 'list') {
-        self.data('resultCanvas').addClass('list-selected')
-        self.data('viewModeList').addClass('selected')
-        self.data('viewModeGrid').removeClass('selected')
-      } else { // grid or no value yet (grid is default)
-        self.data('viewModeGrid').addClass('selected')
-      }
+        var self = $(this)
+        if (viewMode === 'list') {
+            self.data('resultCanvasUser').addClass('list-selected')
+            self.data('resultCanvasFactory').addClass('list-selected')
+            self.data('viewModeList').addClass('selected')
+            self.data('viewModeGrid').removeClass('selected')
+        } else { // grid or no value yet (grid is default)
+            self.data('viewModeGrid').addClass('selected')
+        }
     },
 
     mode: function (mode) {
@@ -207,7 +206,7 @@ JqueryClass('pedalboardBox', {
     showPedalboard: function (pedalboard) {
         var self = $(this)
         var results = self.data('results')
-        var canvas = self.data('resultCanvas')
+        var canvas = pedalboard.factory ? self.data('resultCanvasFactory') : self.data('resultCanvasUser')
         self.pedalboardBox('render', pedalboard, canvas)
         results[pedalboard.bundle] = pedalboard
     },
@@ -229,7 +228,7 @@ JqueryClass('pedalboardBox', {
             return false
         })
 
-        if (pedalboard.bundle == DEFAULT_PEDALBOARD) {
+        if (pedalboard.factory || pedalboard.bundle == DEFAULT_PEDALBOARD) {
             rendered.find('.js-remove').hide()
         } else {
             rendered.find('.js-remove').click(function (e) {
@@ -270,7 +269,7 @@ JqueryClass('pedalboardBox', {
  * Takes a pedalboard canvas and select between grid and list mode
  */
 JqueryClass('pedalboardsModeSelector', {
-    init: function (canvas, saveConfigValue) {
+    init: function (canvasUser, canvasFactory, saveConfigValue) {
         var self = $(this)
         self.click(function () {
             // self.toggleClass('icon-th-1')
@@ -280,7 +279,8 @@ JqueryClass('pedalboardsModeSelector', {
             var viewModeGrid = self.find('#view-mode-grid')
             var newViewMode = viewModeList.hasClass('selected') ? 'grid' : 'list'
             saveConfigValue('pb-view-mode', newViewMode, function () {
-              canvas.toggleClass('list-selected')
+              canvasUser.toggleClass('list-selected')
+              canvasFactory.toggleClass('list-selected')
               viewModeList.toggleClass('selected')
               viewModeGrid.toggleClass('selected')
             })

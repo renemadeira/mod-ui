@@ -1,19 +1,5 @@
-/*
- * Copyright 2012-2013 AGR Audio, Industria e Comercio LTDA. <contato@moddevices.com>
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2012-2023 MOD Audio UG
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 var ws
 var cached_cpuLoad = null,
@@ -31,18 +17,18 @@ $('document').ready(function() {
 
     function triggerDelayedReadyResponse (triggerNew) {
         if (dataReadyTimeout) {
-            clearTimeout(triggerNew)
+            clearTimeout(dataReadyTimeout)
             triggerNew = true
         }
         if (triggerNew) {
             dataReadyTimeout = setTimeout(function() {
                 dataReadyTimeout = null
                 ws.send("data_ready " + dataReadyCounter)
-            }, 30)
+            }, 50)
         }
     }
 
-    ws.onclose = function (evt) {
+    ws.onclose = function () {
         desktop && desktop.blockUI()
     }
 
@@ -76,6 +62,16 @@ $('document').ready(function() {
         if (cmd == "data_ready") {
             dataReadyCounter = data
             triggerDelayedReadyResponse(true)
+            return
+        }
+
+        if (cmd == "param_set") {
+            data         = data.split(" ",3)
+            var instance = data[0]
+            var symbol   = data[1]
+            var value    = parseFloat(data[2])
+
+            desktop.pedalboard.pedalboard("setPortWidgetsValue", instance, symbol, value);
             return
         }
 
@@ -124,16 +120,6 @@ $('document').ready(function() {
                                                  parseInt(cpufreq)/1000000,
                                                  parseInt(cputemp)/1000))
             }
-            return
-        }
-
-        if (cmd == "param_set") {
-            data         = data.split(" ",3)
-            var instance = data[0]
-            var symbol   = data[1]
-            var value    = parseFloat(data[2])
-
-            desktop.pedalboard.pedalboard("setPortWidgetsValue", instance, symbol, value);
             return
         }
 
@@ -520,9 +506,9 @@ $('document').ready(function() {
                 success: function (resp) {
                     desktop.pedalboard.pedalboard('scheduleAdapt', true)
                     desktop.pedalboardEmpty    = empty && !modified
-                    desktop.pedalboardModified = modified
                     desktop.pedalboardPresetId = snapshotId
                     desktop.pedalboardPresetName = resp.name
+                    desktop.setPedalboardAsModified(modified)
 
                     if (resp.ok) {
                         desktop.titleBox.text((desktop.title || 'Untitled') + " - " + resp.name)

@@ -1,20 +1,9 @@
-
-# Copyright 2012-2013 AGR Audio, Industria e Comercio LTDA. <contato@moddevices.com>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2012-2023 MOD Audio UG
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 import os
+import sys
 import re
 import json
 import shutil
@@ -24,6 +13,9 @@ from functools import wraps
 from unicodedata import normalize
 
 from mod.settings import HARDWARE_DESC_FILE
+
+
+WINDOWS = sys.platform == 'win32'
 
 
 def jsoncall(method):
@@ -51,20 +43,30 @@ def json_handler(obj):
     return None
 
 
+def os_sync():
+    if not WINDOWS:
+        os.sync()
+
+
 def check_environment():
     from mod.settings import (LV2_PEDALBOARDS_DIR,
                               DEFAULT_PEDALBOARD, DEFAULT_PEDALBOARD_COPY,
                               DATA_DIR, DOWNLOAD_TMP_DIR, PEDALBOARD_TMP_DIR,
-                              KEYS_PATH, BANKS_JSON_FILE, FAVORITES_JSON_FILE,
-                              UPDATE_CC_FIRMWARE_FILE, UPDATE_MOD_OS_FILE,
+                              KEYS_PATH, USER_BANKS_JSON_FILE, FAVORITES_JSON_FILE,
+                              UPDATE_CC_FIRMWARE_FILE, UPDATE_MOD_OS_FILE, UPDATE_MOD_OS_HERLPER_FILE,
                               CAPTURE_PATH, PLAYBACK_PATH)
 
     # create temp dirs
     if not os.path.exists(DOWNLOAD_TMP_DIR):
         os.makedirs(DOWNLOAD_TMP_DIR)
+
     if os.path.exists(PEDALBOARD_TMP_DIR):
-        shutil.rmtree(PEDALBOARD_TMP_DIR)
-    os.makedirs(PEDALBOARD_TMP_DIR)
+        try:
+            shutil.rmtree(PEDALBOARD_TMP_DIR)
+        except OSError:
+            pass
+        else:
+            os.makedirs(PEDALBOARD_TMP_DIR)
 
     # remove temp files
     for path in (CAPTURE_PATH, PLAYBACK_PATH, UPDATE_CC_FIRMWARE_FILE):
@@ -93,8 +95,8 @@ def check_environment():
     if os.path.exists(DEFAULT_PEDALBOARD_COPY) and not os.path.exists(DEFAULT_PEDALBOARD):
         shutil.copytree(DEFAULT_PEDALBOARD_COPY, DEFAULT_PEDALBOARD)
 
-    if not os.path.exists(BANKS_JSON_FILE):
-        with open(BANKS_JSON_FILE, 'w') as fh:
+    if not os.path.exists(USER_BANKS_JSON_FILE):
+        with open(USER_BANKS_JSON_FILE, 'w') as fh:
             fh.write("[]")
 
     if not os.path.exists(FAVORITES_JSON_FILE):
@@ -104,7 +106,11 @@ def check_environment():
     # remove previous update file
     if os.path.exists(UPDATE_MOD_OS_FILE) and not os.path.exists("/root/check-upgrade-system"):
         os.remove(UPDATE_MOD_OS_FILE)
-        os.sync()
+        os_sync()
+
+    if os.path.exists(UPDATE_MOD_OS_HERLPER_FILE):
+        os.remove(UPDATE_MOD_OS_HERLPER_FILE)
+        os_sync()
 
     return True
 
@@ -235,4 +241,8 @@ class TextFileFlusher(object):
         self.filehandle.flush()
         os.fsync(self.filehandle)
         self.filehandle.close()
+
+        if WINDOWS and os.path.exists(self.filename):
+            os.remove(self.filename)
+
         os.rename(self.filename+".tmp", self.filename)

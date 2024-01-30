@@ -1,26 +1,12 @@
-/*
- * Copyright 2012-2013 AGR Audio, Industria e Comercio LTDA. <contato@moddevices.com>
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2012-2023 MOD Audio UG
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 var STOPPED = 0
 var RECORDING = 1
 var PLAYING = 2
 
 var RECORD_COUNTDOWN = 3
-var RECORD_LENGTH = 60
+var RECORD_LENGTH = 60 * 3
 
 JqueryClass('shareBox', {
     init: function (options) {
@@ -49,7 +35,7 @@ JqueryClass('shareBox', {
             share: function (data, callback) {
                 callback({ok:true})
             },
-            waitForScreenshot: function (generate, callback) {
+            waitForScreenshot: function (generate, bundlepath, callback) {
                 callback(true)
             },
         }, options)
@@ -186,7 +172,7 @@ JqueryClass('shareBox', {
         if (secs == 0)
             return self.shareBox('recordStop')
         self.shareBox('showStep', 3)
-        self.find('#record-stop').text(secs)
+        self.find('#record-stop').text(sprintf('%d:%02d', Math.floor(secs/60), secs%60))
         var timeout = setTimeout(function () {
             self.shareBox('recordStopCountdown', secs - 1)
         }, 1000)
@@ -253,6 +239,9 @@ JqueryClass('shareBox', {
             email      : self.find('#pedalboard-share-email').val(),
             description: self.find('#pedalboard-share-comment').val(),
             title      : self.find('#pedalboard-share-title').val()
+        }
+        if (self.find('#pedalboard-share-hidden').prop("checked")) {
+            data.hidden = true
         }
         self.find('#record-share').attr('disabled', true)
 
@@ -343,21 +332,21 @@ JqueryClass('shareBox', {
             self.shareBox('showStep', self.data('step'))
         }
 
-        self.data('waitForScreenshot')(false, function (ok) {
+        self.data('waitForScreenshot')(false, bundlepath, function (ok) {
             if (ok) {
                 done()
                 return
             }
             // 2nd try
             self.find('#share-wait-message').show().text("Generating screenshot...")
-            self.data('waitForScreenshot')(true, function (ok) {
+            self.data('waitForScreenshot')(true, bundlepath, function (ok) {
                 if (ok) {
                     done()
                     return
                 }
                 // 3rd and final try
                 self.find('#share-wait-message').show().text("Generating for screenshot... (final attempt)")
-                self.data('waitForScreenshot')(true, function (ok) {
+                self.data('waitForScreenshot')(true, bundlepath, function (ok) {
                     // shit! just upload without screenshot then.. :(
                     self.find('#share-wait-message').show().text("Generating for screenshot... failed!")
                     done()

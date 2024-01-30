@@ -1,20 +1,6 @@
-# coding: utf-8
-
-# Copyright 2012-2013 AGR Audio, Industria e Comercio LTDA. <contato@moddevices.com>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2012-2023 MOD Audio UG
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 from datetime import timedelta
 from tornado.iostream import BaseIOStream, StreamClosedError
@@ -36,6 +22,8 @@ from mod.mod_protocol import (
     CMD_PEDALBOARD_NAME_SET,
     CMD_SNAPSHOT_NAME_SET,
     CMD_TUNER,
+    CMD_TUNER_INPUT,
+    CMD_TUNER_REF_FREQ,
     CMD_MENU_ITEM_CHANGE,
     CMD_RESET_EEPROM,
     CMD_DUO_CONTROL_INDEX_SET,
@@ -44,6 +32,7 @@ from mod.mod_protocol import (
     CMD_DUOX_EXP_OVERCURRENT,
     CMD_RESPONSE,
     CMD_RESTORE,
+    CMD_SCREENSHOT,
     FLAG_CONTROL_MOMENTARY,
     FLAG_CONTROL_REVERSE,
     FLAG_CONTROL_TAP_TEMPO,
@@ -65,8 +54,13 @@ from mod.mod_protocol import (
 from mod.settings import LOG
 
 import logging
-import serial
 import time
+
+try:
+    import serial
+    haveSerial = True
+except ImportError:
+    haveSerial = False
 
 class SerialIOStream(BaseIOStream):
     def __init__(self, sp):
@@ -122,12 +116,20 @@ class HMI(object):
     # this can be overriden by subclasses to avoid any connection in DEV mode
     def init(self, callback):
         ioloop = IOLoop.instance()
+
+        if not haveSerial:
+            print("ERROR: This system has no python serial support")
+            ioloop.call_later(1, callback)
+            return
+
         try:
             sp = None
+            # pylint: disable=unexpected-keyword-arg
             try:
                 sp = serial.Serial(self.port, self.baud_rate, timeout=0, write_timeout=0)
             except:
                 sp = serial.Serial(self.port, self.baud_rate, timeout=0, writeTimeout=0)
+            # pylint: enable=unexpected-keyword-arg
             sp.flushInput()
             sp.flushOutput()
         except Exception as e:
@@ -326,24 +328,8 @@ class HMI(object):
 
         self.sp.write(msg.encode('utf-8') + b'\0')
 
-    def initial_state(self, bank_id, pedalboard_id, pedalboards, callback):
-        numPedals = len(pedalboards)
-
-        if numPedals <= 9 or pedalboard_id < 4:
-            startIndex = 0
-        elif pedalboard_id+4 >= numPedals:
-            startIndex = numPedals - 9
-        else:
-            startIndex = pedalboard_id - 4
-
-        endIndex = min(startIndex+9, numPedals)
-
-        data = '%s %d %d %d %d %d' % (CMD_INITIAL_STATE, numPedals, startIndex, endIndex, bank_id, pedalboard_id)
-
-        for i in range(startIndex, endIndex):
-            data += ' %s %d' % (normalize_for_hw(pedalboards[i]['title']), i+1)
-
-        self.send(data, callback)
+    def initial_state(self, data, callback):
+        self.send('{} {}'.format(CMD_INITIAL_STATE, data), callback)
 
     def ui_con(self, callback):
         self.send(CMD_GUI_CONNECTED, callback, 'boolean')
@@ -473,7 +459,7 @@ class HMI(object):
         self.send(CMD_PING, callback, 'boolean')
 
     def tuner(self, freq, note, cents, callback):
-        self.send('%s %f %s %f' % (CMD_TUNER, freq, note, cents), callback)
+        self.send('%s %f %s %d' % (CMD_TUNER, freq, note, cents), callback)
 
     #TODO, This message should be handled by mod-system-control once in place
     def expression_overcurrent(self, callback):
@@ -540,6 +526,9 @@ class HMI(object):
     def reset_eeprom(self, callback=None, datatype='int'):
         self.send(CMD_RESET_EEPROM, callback, datatype)
 
+    def screenshot(self, screen, callback=None, datatype='int'):
+        self.send('{} {} ignored'.format(CMD_SCREENSHOT, screen), callback, datatype)
+
     # FIXME this message should be generic, most likely
     def boot(self, bootdata, callback, datatype='int'):
         self.send("boot {}".format(bootdata), callback, datatype)
@@ -552,3 +541,9 @@ class HMI(object):
 
     def set_snapshot_name(self, index, name, callback):
         self.send('{} {} {}'.format(CMD_SNAPSHOT_NAME_SET, index, normalize_for_hw(name)), callback)
+
+    def set_tuner_input(self, port, callback, datatype='int'):
+        self.send('{} {}'.format(CMD_TUNER_INPUT, port), callback, datatype)
+
+    def set_tuner_ref_freq(self, freq, callback, datatype='int'):
+        self.send('{} {}'.format(CMD_TUNER_REF_FREQ, freq), callback, datatype)

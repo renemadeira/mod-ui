@@ -1,28 +1,14 @@
-# -*- coding: utf-8 -*-
-
-# Copyright 2012-2013 AGR Audio, Industria e Comercio LTDA. <contato@moddevices.com>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2012-2023 MOD Audio UG
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 import os, time, logging, json
 
 from datetime import timedelta
 from tornado import iostream, gen
-from tornado.ioloop import IOLoop
+from tornado.ioloop import IOLoop, PeriodicCallback
 
 from mod import safe_json_load, TextFileFlusher
-from mod.bank import get_last_bank_and_pedalboard
 from mod.development import FakeHost, FakeHMI
 from mod.hmi import HMI
 from mod.recorder import Recorder, Player
@@ -55,13 +41,23 @@ class UserPreferences(object):
 
         return value
 
-    def setAndSave(self, key, value):
+    def setAndSave(self, key, value, atomicSave = True):
         self.prefs[key] = value
-        self.save()
+        if atomicSave:
+            self.saveAtomic()
+        else:
+            self.saveAsync()
 
-    def save(self):
+    def saveAtomic(self):
         with TextFileFlusher(PREFERENCES_JSON_FILE) as fh:
             json.dump(self.prefs, fh, indent=4)
+
+    def saveAsync(self):
+        try:
+            with open(PREFERENCES_JSON_FILE, 'w') as fh:
+                json.dump(self.prefs, fh, indent=4)
+        except OSError:
+            pass
 
 class Session(object):
     def __init__(self):
@@ -71,7 +67,9 @@ class Session(object):
         self.player = Player()
         self.recorder = Recorder()
         self.recordhandle = None
+        self.external_ui_timer = None
 
+        self.screenshot_needed = False
         self.screenshot_generator = ScreenshotGenerator()
         self.websockets = []
 
@@ -158,10 +156,12 @@ class Session(object):
 
     # Add a new plugin, starts enabled (ie, not bypassed)
     def web_add(self, instance, uri, x, y, callback):
+        self.screenshot_needed = True
         self.host.add_plugin(instance, uri, x, y, callback)
 
     # Remove a plugin
     def web_remove(self, instance, callback):
+        self.screenshot_needed = True
         self.host.remove_plugin(instance, callback)
 
     # Address a plugin parameter
@@ -184,10 +184,12 @@ class Session(object):
 
     # Connect 2 ports
     def web_connect(self, port_from, port_to, callback):
+        self.screenshot_needed = True
         self.host.connect(port_from, port_to, callback)
 
     # Disconnect 2 ports
     def web_disconnect(self, port_from, port_to, callback):
+        self.screenshot_needed = True
         self.host.disconnect(port_from, port_to, callback)
 
     # Save the current pedalboard
@@ -199,7 +201,10 @@ class Session(object):
         if self.hmi.initialized and self.host.descriptor.get('hmi_set_pb_name', False):
             self.hmi_set_pb_name(newTitle or title)
 
-        self.screenshot_generator.schedule_screenshot(bundlepath)
+        if bundlepath and self.screenshot_needed:
+            self.screenshot_needed = False
+            self.screenshot_generator.schedule_screenshot(bundlepath)
+
         return bundlepath, newTitle
 
     # Get list of Hardware MIDI devices
@@ -337,12 +342,24 @@ class Session(object):
 
     # Set a plugin block position within the canvas
     def ws_plugin_position(self, instance, x, y, ws):
+        self.screenshot_needed = True
         self.host.set_position(instance, x, y)
         self.msg_callback_broadcast("plugin_pos %s %d %d" % (instance, x, y), ws)
 
     # set the size of the pedalboard (in 1:1 view, aka "full zoom")
     def ws_pedalboard_size(self, width, height):
+        self.screenshot_needed = True
         self.host.set_pedalboard_size(width, height)
+
+    def ws_show_external_ui(self, instance):
+        instance_id = self.host.mapper.get_id_without_creating(instance)
+        self.host.send_notmodified("show_external_ui %d" % (instance_id,))
+
+        # we need to keep socket active, so UI receives idle time, just setup an idle function here
+        if self.external_ui_timer is not None:
+            return
+        self.external_ui_timer = PeriodicCallback(lambda: self.host.send_notmodified("cpu_load"), 1000/30)
+        self.external_ui_timer.start()
 
     # -----------------------------------------------------------------------------------------------------------------
     # web session helpers
@@ -405,6 +422,7 @@ class Session(object):
             ws.write_message(msg)
 
     def load_pedalboard(self, bundlepath, isDefault):
+        self.screenshot_needed = False
         self.host.send_notmodified("feature_enable processing 0")
         title = self.host.load(bundlepath, isDefault)
         self.host.send_notmodified("feature_enable processing 1")
@@ -422,6 +440,7 @@ class Session(object):
 
     def reset(self, callback):
         logging.debug("SESSION RESET")
+        self.screenshot_needed = False
         self.host.send_notmodified("feature_enable processing 0")
 
         def host_callback(resp):

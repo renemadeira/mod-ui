@@ -1,19 +1,5 @@
-/*
- * MOD-UI utilities
- * Copyright (C) 2015-2016 Filipe Coelho <falktx@falktx.com>
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation; either version 2 of
- * the License, or any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
- *
- * For a full copy of the GNU General Public License see the COPYING file.
- */
+// SPDX-FileCopyrightText: 2012-2023 MOD Audio UG
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #ifndef DEBUG
 #define DEBUG
@@ -41,7 +27,7 @@ void scanPlugins()
     {
         for (int i=0; plugins[i] != nullptr; ++i)
         {
-            if (! plugins[i]->valid)
+            if (! plugins[i])
             {
                 printf("Invalid plugin found\n");
                 break;
@@ -64,11 +50,11 @@ void scanPlugins()
             continue;
     }
 
-    if (const PedalboardInfo_Mini* const* const pedalboards = get_all_pedalboards())
+    if (const PedalboardInfo_Mini* const* const pedalboards = get_all_pedalboards(kPedalboardInfoBoth))
     {
         for (int i=0; pedalboards[i] != nullptr; ++i)
         {
-            if (! pedalboards[i]->valid)
+            if (! pedalboards[i])
             {
                 printf("Invalid pedalboard found\n");
                 break;

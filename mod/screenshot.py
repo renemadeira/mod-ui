@@ -1,23 +1,14 @@
-# Copyright 2012-2013 AGR Audio, Industria e Comercio LTDA. <contato@moddevices.com>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2012-2023 MOD Audio UG
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 import os
 import subprocess
+import sys
+import logging
 
 from tornado.ioloop import IOLoop
-from mod.settings import HTML_DIR, DEV_ENVIRONMENT, DEVICE_KEY, CACHE_DIR
+from mod.settings import HTML_DIR, DEV_ENVIRONMENT, DEVICE_KEY, CACHE_DIR, APP
 
 
 def generate_screenshot(bundle_path, callback):
@@ -31,24 +22,36 @@ def generate_screenshot(bundle_path, callback):
         pass
 
     cwd = os.path.abspath(os.path.join(os.path.dirname(__file__), '../'))
-    cmd = ['python3', '-m', 'modtools.pedalboard', 'take_screenshot', bundle_path, HTML_DIR, CACHE_DIR]
-    if not DEV_ENVIRONMENT and DEVICE_KEY:  # if using a real MOD, setup niceness
-        cmd = ['/usr/bin/nice', '-n', '+34'] + cmd
 
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, cwd=cwd)
+    # running packaged through cxfreeze
+    if APP and os.path.isfile(sys.argv[0]):
+        cmd = [os.path.join(cwd, 'mod-pedalboard'), 'take_screenshot', bundle_path, HTML_DIR, CACHE_DIR]
+        if sys.platform == 'win32':
+            cmd[0] += ".exe"
+        logging.debug('[screenshot] now running: %s', ' '.join(cmd))
+
+    # regular run
+    else:
+        cmd = ['python3', '-m', 'modtools.pedalboard', 'take_screenshot', bundle_path, HTML_DIR, CACHE_DIR]
+        if not DEV_ENVIRONMENT and DEVICE_KEY:  # if using a real MOD, setup niceness
+            cmd = ['/usr/bin/nice', '-n', '+34'] + cmd
+
+    proc = subprocess.Popen(cmd, cwd=cwd)
     loop = IOLoop.instance()
 
-    def proc_callback(fileno, _):
+    def proc_callback():
         if proc.poll() is None:
+            loop.call_later(0.5, proc_callback)
             return
-        loop.remove_handler(fileno)
 
         if not os.path.exists(screenshot) or not os.path.exists(thumbnail):
-            return callback()
+            logging.warn('[screenshot] process finished but image files do not exist')
+            callback()
+            return
 
         callback(thumbnail)
 
-    loop.add_handler(proc.stdout.fileno(), proc_callback, 16)
+    loop.call_later(0.5, proc_callback)
 
 
 class ScreenshotGenerator(object):
@@ -93,7 +96,7 @@ class ScreenshotGenerator(object):
         try:
             generate_screenshot(self.processing, img_callback)
         except Exception as ex:
-            print('ERROR: {0}'.format(ex))
+            logging.error('[screenshot] %s', ex)
             img_callback()
 
     def check_screenshot(self, bundlepath):

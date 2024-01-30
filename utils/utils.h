@@ -1,19 +1,5 @@
-/*
- * MOD-UI utilities
- * Copyright (C) 2015-2020 Filipe Coelho <falktx@falktx.com>
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation; either version 2 of
- * the License, or any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
- *
- * For a full copy of the GNU General Public License see the COPYING file.
- */
+// SPDX-FileCopyrightText: 2012-2023 MOD Audio UG
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #ifndef MOD_UTILS_H_INCLUDED
 #define MOD_UTILS_H_INCLUDED
@@ -25,7 +11,31 @@ extern "C" {
 #include <stdint.h>
 #endif
 
+#ifdef _WIN32
+#define MOD_API __declspec (dllexport)
+#else
 #define MOD_API __attribute__ ((visibility("default")))
+#endif
+
+typedef enum {
+    kPluginLicenseNonCommercial = 0,
+    kPluginLicenseTrial = -1,
+    kPluginLicensePaid = 1,
+} PluginLicenseType;
+
+typedef enum {
+    kPluginIONull = 0,
+    kPluginIOAudioMono = 1,
+    kPluginIOAudioStereo = 2,
+    kPluginIOInstrument = 3,
+    kPluginIOMIDI = 4,
+} PluginIOType;
+
+typedef enum {
+    kPedalboardInfoUserOnly = 0,
+    kPedalboardInfoFactoryOnly = 1,
+    kPedalboardInfoBoth = 2,
+} PedalboardInfoType;
 
 typedef struct {
     const char* name;
@@ -48,6 +58,7 @@ typedef struct {
     const char* stylesheet;
     const char* screenshot;
     const char* thumbnail;
+    const char* discussionURL;
     const char* documentation;
     const char* brand;
     const char* label;
@@ -165,7 +176,9 @@ typedef struct {
     int minorVersion;
     int release;
     int builder;
-    int licensed;
+    int licensed; // PluginLicenseType
+    int iotype; // PluginIOType
+    bool hasExternalUI;
     const char* version;
     const char* stability;
     PluginAuthor author;
@@ -177,12 +190,11 @@ typedef struct {
 } PluginInfo;
 
 typedef struct {
-    int licensed;
+    int licensed; // PluginLicenseType
     const PluginPreset* presets;
 } NonCachedPluginInfo;
 
 typedef struct {
-    bool valid;
     const char* uri;
     const char* name;
     const char* brand;
@@ -194,9 +206,9 @@ typedef struct {
     int minorVersion;
     int release;
     int builder;
-    int licensed;
+    int licensed; // PluginLicenseType
+    int iotype; // PluginIOType
     PluginGUI_Mini gui;
-    bool needsDealloc;
 } PluginInfo_Mini;
 
 typedef struct {
@@ -283,6 +295,7 @@ typedef struct {
 typedef struct {
     const char* title;
     int width, height;
+    bool factory;
     bool midi_separated_mode;
     bool midi_loopback;
     const PedalboardPlugin* plugins;
@@ -293,8 +306,9 @@ typedef struct {
 } PedalboardInfo;
 
 typedef struct {
-    bool valid;
     bool broken;
+    bool factory;
+    bool hasTrialPlugins;
     const char* uri;
     const char* bundle;
     const char* title;
@@ -382,7 +396,7 @@ MOD_API bool is_plugin_preset_valid(const char* plugin, const char* preset);
 MOD_API void rescan_plugin_presets(const char* uri);
 
 // get all available pedalboards (ie, plugins with pedalboard type)
-MOD_API const PedalboardInfo_Mini* const* get_all_pedalboards(void);
+MOD_API const PedalboardInfo_Mini* const* get_all_pedalboards(int ptype);
 
 // get all currently "broken" pedalboards (ie, pedalboards which contain unavailable plugins)
 MOD_API const char* const* get_broken_pedalboards(void);
@@ -399,6 +413,10 @@ MOD_API int* get_pedalboard_size(const char* bundle);
 // Get plugin port values of a pedalboard
 // NOTE: may return null
 MOD_API const PedalboardPluginValues* get_pedalboard_plugin_values(const char* bundle);
+
+// Reset pedalboards related cache
+// Needed when plugins are added, as previous "broken" PBs might have been fixed with the change.
+MOD_API void reset_get_all_pedalboards_cache(int ptype);
 
 // Get port values from a plugin state
 MOD_API const StatePortValue* get_state_port_values(const char* state);

@@ -1,19 +1,5 @@
-/*
- * Copyright 2012-2013 AGR Audio, Industria e Comercio LTDA. <contato@moddevices.com>
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2012-2023 MOD Audio UG
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 // add this to plugin data when cloud fails
 function getDummyPluginData() {
@@ -86,6 +72,14 @@ JqueryClass('cloudPluginBox', {
         searchbox.keypress(function (e) { // keypress won't detect delete and backspace but will only allow inputable keys
             if (e.which == 13)
                 return
+            if (lastKeyTimeout != null) {
+                clearTimeout(lastKeyTimeout)
+            }
+            lastKeyTimeout = setTimeout(function () {
+                self.cloudPluginBox('search')
+            }, 400);
+        })
+        searchbox.on('cut', function(e) {
             if (lastKeyTimeout != null) {
                 clearTimeout(lastKeyTimeout)
             }
@@ -316,6 +310,10 @@ JqueryClass('cloudPluginBox', {
                 } else {
                     cplugin.installedVersion = null // if set to [0, 0, 0, 0], it appears as intalled on cloudplugininfo
                     cplugin.status = 'blocked'
+                }
+
+                if (self.data('fake') && cplugin.mod_license === 'paid_perpetual') {
+                    cplugin.licensed = true;
                 }
 
                 if (!cplugin.screenshot_available && !cplugin.thumbnail_available) {
@@ -893,6 +891,11 @@ JqueryClass('cloudPluginBox', {
         var self = $(this)
 
         var plugin = self.data('pluginsData')[uri]
+        if (!plugin) {
+            if (self.data('fake'))
+                new Notification('error', "Requested plugin is not available")
+            return
+        }
 
         var cloudChecked = false
         var localChecked = false
@@ -939,7 +942,7 @@ JqueryClass('cloudPluginBox', {
                 label : plugin.label,
                 ports : plugin.ports,
                 plugin_href: PLUGINS_URL + '/' + btoa(plugin.uri),
-                pedalboard_href: desktop.getPedalboardHref(plugin.uri),
+                pedalboard_href: desktop.getPedalboardHref(plugin.uri, plugin.stable === false),
                 build_env_uppercase: (plugin.buildEnvironment || "LOCAL").toUpperCase(),
                 show_build_env: plugin.buildEnvironment !== "prod",
             };

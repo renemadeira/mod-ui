@@ -1,21 +1,13 @@
-# Copyright 2012-2013 AGR Audio, Industria e Comercio LTDA. <contato@moddevices.com>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2012-2023 MOD Audio UG
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 import argparse
 import base64
 import json
 import os
+import shutil
+import sys
 
 from enum import Enum
 from PIL import Image
@@ -26,7 +18,6 @@ from modtools.utils import (
     get_pedalboard_info,
     get_plugin_info,
     get_plugin_gui,
-    set_cpu_affinity,
 )
 
 MAX_THUMB_HEIGHT = 640
@@ -42,7 +33,10 @@ def resize_image(img):
     if height > MAX_THUMB_HEIGHT:
         width = width * MAX_THUMB_HEIGHT / height
         height = MAX_THUMB_HEIGHT
-    img.thumbnail((width, height), Image.ANTIALIAS)
+    if hasattr(Image, 'LANCZOS'):
+        img.thumbnail((width, height), Image.LANCZOS)
+    else:
+        img.thumbnail((width, height), Image.ANTIALIAS)
 
 
 class Anchor(Enum):
@@ -81,6 +75,12 @@ def detect_first_column(uri, img, scan, num_ports, rtol=False):
         return [(455, 89) if rtol else (20, 89)]
     if uri == 'http://moddevices.com/plugins/forward-audio/mega-california-rectifier':
         return [(455, 89) if rtol else (20, 89)]
+    if uri == 'http://VeJaPlugins.com/plugins/Release/Rambler':
+        return [(625, 216) if rtol else (8, 216)]
+    if uri == 'https://falktx.com/plugins/portal#sink':
+        return [(204, 183), (0, 0), (204, 264)]
+    if uri == 'https://falktx.com/plugins/portal#source':
+        return [(207, 183), (0, 0), (207, 264)]
 
     was_transparent = True
     found = False
@@ -116,10 +116,6 @@ def chunks(l, n):
 
 
 def take_screenshot(bundle_path, html_dir, cache_dir, size):
-    # ugly workaround until we find something better
-    if os.getenv('MOD_MODEL_TYPE') == 'dwarf:aarch64-a35':
-        set_cpu_affinity(1)
-
     os.makedirs(cache_dir, exist_ok=True)
     lv2_init()
     pb = get_pedalboard_info(bundle_path)
@@ -337,7 +333,8 @@ def take_screenshot(bundle_path, html_dir, cache_dir, size):
 
         plugin_map[p['instance']] = p
 
-    lv2_cleanup()
+    # we care more about speed than correctly cleaning up after ourselves
+    # lv2_cleanup()
 
     # calculate image size
     height = 0
@@ -389,7 +386,11 @@ def take_screenshot(bundle_path, html_dir, cache_dir, size):
             if '/' not in c['source']:
                 continue
             source_i, source_s = c['source'].split('/')
-            source = plugin_map[source_i]
+            try:
+                source = plugin_map[source_i]
+            except KeyError:
+                print("WARNING: invalid port source instance", source_i)
+                continue
             all_ports = source['data']['ports']['audio']['output'] + source['data']['ports']['midi']['output'] + source['data']['ports']['cv']['output']
             try:
                 port = next(p for p in all_ports if p['symbol'] == source_s)
@@ -453,6 +454,12 @@ def take_screenshot(bundle_path, html_dir, cache_dir, size):
 
     # create image
     img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+
+    # draw plugins
+    for p in plugins:
+        img.paste(p['img'], (rint(p['x']), rint(p['y'])), p['img'])
+
+    del plugins
 
     # draw device connectors
     for d in device_capture:
@@ -519,13 +526,8 @@ def take_screenshot(bundle_path, html_dir, cache_dir, size):
     del cv_output_connected
     del connectors
 
-    # draw plugins
-    for p in plugins:
-        img.paste(p['img'], (rint(p['x']), rint(p['y'])), p['img'])
-
     default_screenshot.close()
     del default_screenshot
-    del plugins
 
     img.save(os.path.join(bundle_path, 'screenshot.png'), compress_level=3)
     resize_image(img)
@@ -539,7 +541,13 @@ def main():
 
     # take screenshot bundle_path, html_dir, cache_dir
     def _take_screenshot(args):
-        take_screenshot(args.pedalboard_path, args.html_path, args.cache_path, args.size)
+        try:
+            take_screenshot(args.pedalboard_path, args.html_path, args.cache_path, args.size)
+        except:
+            print("caught exception, retrying without cache...", file=sys.stderr, flush=True)
+            # if we get exceptions thrown during screenshot generation, try invalidating cache
+            shutil.rmtree(args.cache_path)
+            take_screenshot(args.pedalboard_path, args.html_path, args.cache_path, args.size)
 
     subparser = subparsers.add_parser('take_screenshot', help='Take a screenshot of a given pedalboard')
     subparser.add_argument('pedalboard_path', help='Path to pedalboard bundle folder')
@@ -551,7 +559,7 @@ def main():
     args = parser.parse_args()
     if hasattr(args, 'func'):
         args.func(args)
-        exit(0)
+        sys.exit(0)
     else:
         parser.print_usage()
 

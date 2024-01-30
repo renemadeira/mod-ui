@@ -799,9 +799,10 @@ svg .connecting-light { fill: none; stroke: #6FF; stroke-width: 1; z-index: 1001
 	margin: 0 !important;
 }
 
-#share-window  #record-rec {
-	border-radius: 50% !important;
+#share-window #record-rec {
+    border-radius: 50% !important;
     padding: 0 !important;
+    width: 75px;
 }
 #record-rec u {
     border-radius: 50%;
@@ -820,7 +821,7 @@ svg .connecting-light { fill: none; stroke: #6FF; stroke-width: 1; z-index: 1001
 	padding-top: 15px;
 	margin: 15px auto;
 	display: block;
-	width: 75px;
+	width: 150px;
 	height: 75px;
 }
 #share-window  .btn-large {
@@ -893,6 +894,7 @@ svg .connecting-light { fill: none; stroke: #6FF; stroke-width: 1; z-index: 1001
 	display: block;
 	width: 100%;
 	padding-top: 10px;
+	float: left;
 }
 
 /*
@@ -1357,8 +1359,13 @@ svg .connecting-light { fill: none; stroke: #6FF; stroke-width: 1; z-index: 1001
     color: white !important;
 }
 
-@media only screen and (max-width: 1280px) {
+@media only screen and (max-width: 1468px) {
     #plugins-library .count {
         display: none;
+    }
+}
+@media only screen and (max-width: 1140px) {
+    #effect-tab-Favorites {
+        display: none !important;
     }
 }

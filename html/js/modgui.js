@@ -1,19 +1,5 @@
-/*
- * Copyright 2012-2013 AGR Audio, Industria e Comercio LTDA. <contato@moddevices.com>
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2012-2023 MOD Audio UG
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 var loadedIcons = {}
 var loadedSettings = {}
@@ -179,7 +165,7 @@ function loadDependencies(gui, effect, dummy, callback) { //source, effect, bund
                         eval('method = ' + code)
                     } catch (err) {
                         method = null
-                        console.log("Failed to evaluate javascript for '"+effect.uri+"' plugin")
+                        console.log("Failed to evaluate javascript for '"+effect.uri+"' plugin, reason:\n",err)
                     }
                     loadedJSs[plughash] = method
                     gui.jsCallback = method
@@ -1701,7 +1687,43 @@ function GUI(effect, options) {
         },
         patch_set: function (uri, valuetype, value) {
             self.lv2PatchSet(uri, valuetype, value, "from-js")
-        }
+        },
+        // added in v3: a few handy utilities
+        get_custom_resource_filename: function (filename) {
+            return '/effect/file/custom?filename='+filename+'&uri='+escape(self.effect.uri)+'&v='+self.effect.renderedVersion+'&r='+VERSION
+        },
+        get_port_index_for_symbol: function (symbol) {
+            var i, port;
+            for (i in self.effect.ports.control.input) {
+                port = self.effect.ports.control.input[i]
+                if (port.symbol == symbol) {
+                    return port.index
+                }
+            }
+            for (i in self.effect.ports.control.output) {
+                port = self.effect.ports.control.output[i]
+                if (port.symbol == symbol) {
+                    return port.index
+                }
+            }
+            return -1;
+        },
+        get_port_symbol_for_index: function (index) {
+            var i, port;
+            for (i in self.effect.ports.control.input) {
+                port = self.effect.ports.control.input[i]
+                if (port.index == index) {
+                    return port.symbol
+                }
+            }
+            for (i in self.effect.ports.control.output) {
+                port = self.effect.ports.control.output[i]
+                if (port.index == index) {
+                    return port.symbol
+                }
+            }
+            return null;
+        },
     }
 
     this.triggerJS = function (event) {
@@ -1709,7 +1731,7 @@ function GUI(effect, options) {
             return
 
         // bump this everytime the data structure or functions change
-        event.api_version = 2
+        event.api_version = 3
 
         // normal data
         event.data     = self.jsData
@@ -1720,7 +1742,7 @@ function GUI(effect, options) {
             self.jsCallback(event, self.jsFuncs)
         } catch (err) {
             self.jsCallback = null
-            console.log("A plugin javascript code is broken and has been disabled")
+            console.log("A plugin javascript code is broken and has been disabled, reason:\n", err)
         }
     }
 }
@@ -2638,7 +2660,7 @@ JqueryClass('customSelectPath', baseWidget, {
                 if (!self.data('enabled')) {
                     return self.customSelectPath('prevent', e)
                 }
-                var value = opt.attr('mod-parameter-value')
+                var value = opt.attr('mod-parameter-value').replace(/\\/g,'\\\\')
                 self.customSelectPath('setValue', value, false)
             })
         })

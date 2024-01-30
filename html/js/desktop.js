@@ -1,19 +1,5 @@
-/*
- * Copyright 2012-2013 AGR Audio, Industria e Comercio LTDA. <contato@moddevices.com>
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-FileCopyrightText: 2012-2023 MOD Audio UG
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 function Desktop(elements) {
     var self = this
@@ -116,6 +102,9 @@ function Desktop(elements) {
     this.pedalboardStats = {};
     this.resetPedalboardStats = function() {
         this.pedalboardStatsSuccess = false;
+        if (! CLOUD_TERMS_ACCEPTED) {
+            return
+        }
         $.ajax({
             url: SITEURL + '/pedalboards/stats',
             type: 'GET',
@@ -126,7 +115,7 @@ function Desktop(elements) {
             cache: false
         })
     };
-    this.getPedalboardHref = function(uri) {
+    this.getPedalboardHref = function(uri, unstable) {
         if (!this.pedalboardStatsSuccess) {
             return null;
         }
@@ -135,6 +124,9 @@ function Desktop(elements) {
             return null;
         }
         var encodedUri = encodeURIComponent(uri);
+        if (unstable) {
+            encodedUri += '&unstable=true';
+        }
         return PEDALBOARDS_URL + '/?plugin_uri=' + encodedUri;
     };
 
@@ -151,7 +143,7 @@ function Desktop(elements) {
                 data: JSON.stringify(addressing),
                 success: function (resp) {
                     if (resp) {
-                        self.pedalboardModified = true
+                        self.setPedalboardAsModified(true)
                         callback(true)
                     } else {
                         new Bug("Couldn't address parameter, not allowed")
@@ -313,7 +305,7 @@ function Desktop(elements) {
                     allpedals[pedal.bundle] = pedal
                     self.pedalboardIndexer.add({
                         id: pedal.bundle,
-                        data: [pedal.bundle, pedal.title].join(" ")
+                        data: pedal.title
                     })
                 }
                 self.pedalboardIndexerData = allpedals
@@ -341,7 +333,7 @@ function Desktop(elements) {
 
             callback(pedals, '')
         }
-        else
+        else if (CLOUD_TERMS_ACCEPTED)
         {
             // NOTE: this part is never called. pedalboard search is always local
             $.ajax({
@@ -478,6 +470,15 @@ function Desktop(elements) {
         })
     }
 
+    this.setPedalboardAsModified = function (modified) {
+        this.pedalboardModified = modified
+        if (modified) {
+            elements.saveButton.addClass('unmodified-changes')
+        } else {
+            elements.saveButton.removeClass('unmodified-changes')
+        }
+    }
+
     elements.devicesIcon.statusTooltip()
     this.ccDeviceManager = new ControlChainDeviceManager({
         devicesIcon: elements.devicesIcon,
@@ -551,7 +552,7 @@ function Desktop(elements) {
               var source = syncMode === "link" ? "Ableton Link" : "MIDI"
               new Notification('info', 'BPM addressing removed, incompatible with ' + source + ' sync mode', 8000)
           }
-          self.pedalboardModified = true
+          self.setPedalboardAsModified(true)
         },
         setSyncMode: function(syncMode, callback) {
           $.ajax({
@@ -594,7 +595,7 @@ function Desktop(elements) {
                             var source = syncMode === "link" ? "Ableton Link" : "MIDI"
                             new Notification('info', 'BPM addressing removed, incompatible with ' + source + ' sync mode', 8000)
                         }
-                        self.pedalboardModified = true
+                        self.setPedalboardAsModified(true)
                         callback(true)
                     } else {
                         new Bug("Couldn't address parameter")
@@ -712,6 +713,7 @@ function Desktop(elements) {
             success: function () {
               if (callback) {
                 callback(true)
+                PREFERENCES[key] = value
               }
             },
             error: function () {
@@ -729,7 +731,33 @@ function Desktop(elements) {
         $('#mod-bank').hide()
         $('#mod-file-manager').hide()
         $('#mod-settings').hide()
+        $('#mod-devices').hide()
+        $('#mod-status').hide()
+        $('#mod-ram').hide()
+        $('#mod-show-midi-port').hide()
         $('#pedalboards-library').find('a').hide()
+        $('#pedal-presets-window').find('.js-assign-all').hide()
+    }
+
+    this.setupDeviceAuthentication = function () {
+        self.authenticateDevice(function (ok) {
+            if (ok) {
+                console.log("MOD authentication succeeded")
+                self.resetPedalboardStats();
+            } else {
+                console.log("MOD authentication failed")
+                self.upgradeWindow.upgradeWindow('setErrored')
+            }
+        })
+    }
+
+    this.setupMatomo = function() {
+        var _mtm = window._mtm = window._mtm || [];
+        _mtm.push({'mtm.startTime': (new Date().getTime()), 'event': 'mtm.Start'});
+        (function() {
+            var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+            g.async=true; g.src='https://cdn.matomo.cloud/modaudio.matomo.cloud/container_DfEOyKDN.js'; s.parentNode.insertBefore(g,s);
+        })();
     }
 
     this.effectBox = self.makeEffectBox(elements.effectBox,
@@ -828,6 +856,10 @@ function Desktop(elements) {
     },
 
     this.loadRemotePedalboard = function (pedalboard_id) {
+        if (! CLOUD_TERMS_ACCEPTED) {
+            return
+        }
+
         self.windowManager.closeWindows(null, true)
 
         if (self.cloudAccessToken == null) {
@@ -842,7 +874,7 @@ function Desktop(elements) {
         }
 
         $.ajax({
-            url: SITEURL + '/pedalboards/' + pedalboard_id,
+            url: startsWith(pedalboard_id, 'https://') ? pedalboard_id : (SITEURL + '/pedalboards/' + pedalboard_id),
             contentType: 'application/json',
             success: function (resp) {
                 if (!resp.data.stable && PREFERENCES['show-labs-plugins'] !== "true") {
@@ -861,7 +893,7 @@ function Desktop(elements) {
 
                             transfer.reportFinished = function () {
                                 self.pedalboardEmpty = false
-                                self.pedalboardModified = true
+                                self.setPedalboardAsModified(true)
                             }
 
                             transfer.reportError = function (error) {
@@ -873,7 +905,7 @@ function Desktop(elements) {
                             self.pedalboard.data('wait').stop()
                         }
                     })
-                })
+                }, true)
             },
             error: function (resp) {
                   new Bug("Couldn't get pedalboard info, error:<br/>" + resp.statusText)
@@ -883,8 +915,7 @@ function Desktop(elements) {
         })
     },
 
-    this.waitForScreenshot = function (generate, callback) {
-        var bundlepath = self.pedalboardBundle
+    this.waitForScreenshot = function (generate, bundlepath, callback) {
         pending_pedalboard_screenshots.push(bundlepath)
 
         if (generate) {
@@ -926,9 +957,10 @@ function Desktop(elements) {
                 success: function (result) {
                     if (result.ok) {
                         // dummy call to keep 1 ajax request active while screenshot is generated
-                        self.waitForScreenshot(false, function(){})
+                        self.waitForScreenshot(false, result.bundlepath, function(){})
                         // all set
                         callback(true, result.bundlepath, result.title)
+                        _paq.push(['trackEvent', 'pedalboard', 'pedalboard-save'])
                     } else {
                         callback(false, "Failed to save")
                     }
@@ -994,7 +1026,6 @@ function Desktop(elements) {
             url: '/snapshot/save',
             method: 'POST',
             success: function () {
-                self.pedalboardModified = true
                 new Notification('info', 'Pedalboard snapshot saved', 2000)
             },
             error: function () {
@@ -1022,7 +1053,6 @@ function Desktop(elements) {
                     }
                     self.pedalboardPresetId = resp.id
                     self.pedalboardPresetName = resp.title
-                    self.pedalboardModified = true
                     self.titleBox.text((self.title || 'Untitled') + " - " + resp.title)
                     new Notification('info', 'Pedalboard snapshot saved', 2000)
                 },
@@ -1176,6 +1206,10 @@ function Desktop(elements) {
                 })
             }
 
+            if (! CLOUD_TERMS_ACCEPTED) {
+                return
+            }
+
             if (self.cloudAccessToken == null) {
                 self.authenticateDevice(function (ok) {
                     if (ok && self.cloudAccessToken != null) {
@@ -1201,6 +1235,7 @@ function Desktop(elements) {
                     email      : data.email,
                     description: data.description,
                     title      : data.title,
+                    hidden     : data.hidden,
                 }),
                 success: function (resp) {
                     var transfer = new SimpleTransference('/pedalboard/pack_bundle/?bundlepath=' + escape(self.pedalboardBundle),
@@ -1462,13 +1497,13 @@ Desktop.prototype.makePedalboard = function (el, effectBox) {
                     self.title = ''
                     self.pedalboardBundle = null
                     self.pedalboardEmpty  = true
-                    self.pedalboardModified = false
                     self.pedalboardPresetId = 0
                     self.pedalboardPresetName = ''
                     self.pedalboardDemoPluginsNotified = false
                     self.titleBox.text('Untitled')
                     self.titleBox.addClass("blend")
                     self.transportControls.resetControlsEnabled()
+                    self.setPedalboardAsModified(false)
 
                     callback(true)
                 },
@@ -1489,8 +1524,12 @@ Desktop.prototype.makePedalboard = function (el, effectBox) {
             self.effectBox.effectBox('showPluginInfo', pluginData)
         },
 
+        showExternalUI: function (instance) {
+            ws.send(sprintf("show_external_ui %s", instance))
+        },
+
         pluginParameterChange: function (port, value) {
-            self.pedalboardModified = true
+            self.setPedalboardAsModified(true)
             ws.send(sprintf("param_set %s %f", port, value))
         },
 
@@ -1499,12 +1538,12 @@ Desktop.prototype.makePedalboard = function (el, effectBox) {
         },
 
         pluginPatchSet: function (instance, uri, valuetype, value) {
-            self.pedalboardModified = true
+            self.setPedalboardAsModified(true)
             ws.send(sprintf("patch_set %s %s %s %s", instance, uri, valuetype, value))
         },
 
         pluginMove: function (instance, x, y) {
-            self.pedalboardModified = true
+            self.setPedalboardAsModified(true)
             ws.send(sprintf("plugin_pos %s %f %f", instance, x, y))
         },
 
@@ -1584,7 +1623,7 @@ Desktop.prototype.makePedalboard = function (el, effectBox) {
     // Bind events
     el.bind('modified', function () {
         self.pedalboardEmpty = false
-        self.pedalboardModified = true
+        self.setPedalboardAsModified(true)
     })
     /*
     el.bind('dragStart', function () {
@@ -1737,7 +1776,29 @@ Desktop.prototype.makeBankBox = function (el, trigger) {
                 },
                 cache: false,
             })
-        }
+        },
+        copyFactoryPedalboard: function (bundlepath, title, callback) {
+            $.ajax({
+                url: '/pedalboard/factorycopy/',
+                data: {
+                    bundlepath: bundlepath,
+                    title: title,
+                },
+                success: function (resp) {
+                    if (resp) {
+                        self.previousPedalboardList = null
+                        new Notification('warning', 'Factory pedalboard was duplicated into the User Pedalboards Library')
+                        callback(resp)
+                    } else {
+                        new Bug("Could not copy factory pedalboard")
+                    }
+                },
+                error: function () {
+                    new Bug("Failed to copy factory pedalboard")
+                },
+                cache: false
+            })
+        },
     })
 }
 
@@ -1749,8 +1810,8 @@ Desktop.prototype.makeFileManagerBox = function (el, trigger) {
     })
 }
 
-Desktop.prototype.reset = function (callback) {
-    if (this.pedalboardModified && !confirm("There are unsaved modifications that will be lost. Are you sure?")) {
+Desktop.prototype.reset = function (callback, skipConfirmDialog) {
+    if (this.pedalboardModified && !skipConfirmDialog && !confirm("There are unsaved modifications that will be lost. Are you sure?")) {
         return
     }
 
@@ -1817,12 +1878,13 @@ Desktop.prototype.loadPedalboard = function (bundlepath, callback) {
                 self.title = resp.name
                 self.pedalboardBundle = bundlepath
                 self.pedalboardEmpty = false
-                self.pedalboardModified = false
                 self.pedalboardDemoPluginsNotified = false
+                self.setPedalboardAsModified(false)
                 self.titleBox.text(resp.name);
                 self.titleBox.removeClass("blend");
 
                 callback(true)
+                _paq.push(['trackEvent', 'pedalboard', 'pedalboard-load']);
             },
             error: function () {
                 new Bug("Couldn't load pedalboard")
@@ -1848,7 +1910,7 @@ Desktop.prototype.saveCurrentPedalboard = function (asNew, callback) {
                 return
             }
 
-            if (asNew || ! self.title) {
+            if (asNew || title || ! self.title) {
                 self.titleBox.removeClass("blend");
                 self.previousPedalboardList = null
             }
@@ -1856,7 +1918,7 @@ Desktop.prototype.saveCurrentPedalboard = function (asNew, callback) {
             self.title = title
             self.pedalboardBundle = errorOrPath
             self.pedalboardEmpty = false
-            self.pedalboardModified = false
+            self.setPedalboardAsModified(false)
             self.titleBox.text(title + " - " + self.pedalboardPresetName)
 
             if (self.previousPedalboardList != null) {

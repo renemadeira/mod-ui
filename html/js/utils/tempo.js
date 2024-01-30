@@ -1,7 +1,10 @@
+// SPDX-FileCopyrightText: 2012-2023 MOD Audio UG
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 // List of all subdividers' values and labels
 var dividers = [{
     value: 0.333,
-    label: "2T"
+    label: "2."
   },
   {
     value: 0.5,
@@ -9,10 +12,10 @@ var dividers = [{
   },
   {
     value: 0.75,
-    label: "2."
+    label: "2T"
   },{
     value: 0.666,
-    label: "1T"
+    label: "1."
   },
   {
     value: 1,
@@ -20,11 +23,11 @@ var dividers = [{
   },
   {
     value: 1.5,
-    label: "1."
+    label: "1T"
   },
   {
     value: 1.333,
-    label: "1/2T"
+    label: "1/2."
   },
   {
     value: 2,
@@ -32,11 +35,11 @@ var dividers = [{
   },
   {
     value: 3,
-    label: "1/2."
+    label: "1/2T"
   },
   {
     value: 2.666,
-    label: "1/4T"
+    label: "1/4."
   },
   {
     value: 4,
@@ -44,11 +47,11 @@ var dividers = [{
   },
   {
     value: 6,
-    label: "1/4."
+    label: "1/4T"
   },
   {
     value: 5.333,
-    label: "1/8T"
+    label: "1/8."
   },
   {
     value: 8,
@@ -56,11 +59,11 @@ var dividers = [{
   },
   {
     value: 12,
-    label: "1/8."
+    label: "1/8T"
   },
   {
     value: 10.666,
-    label: "1/16T"
+    label: "1/16."
   },
   {
     value: 16,
@@ -68,11 +71,11 @@ var dividers = [{
   },
   {
     value: 24,
-    label: "1/16."
+    label: "1/16T"
   },
   {
     value: 21.333,
-    label: "1/32T"
+    label: "1/32."
   },
   {
     value: 32,
@@ -80,7 +83,7 @@ var dividers = [{
   },
   {
     value: 48,
-    label: "1/32."
+    label: "1/32T"
   }
 ];
 

@@ -1,19 +1,6 @@
-# -*- coding: utf-8 -*-
-
-# Copyright 2012-2013 AGR Audio, Industria e Comercio LTDA. <contato@moddevices.com>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2012-2023 MOD Audio UG
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 import json
 import logging
@@ -26,7 +13,7 @@ import time
 
 from base64 import b64decode, b64encode
 from datetime import timedelta
-from signal import signal, SIGUSR1, SIGUSR2
+from random import randint
 from tornado import gen, iostream, web, websocket
 from tornado.escape import squeeze, url_escape, xhtml_escape
 from tornado.ioloop import IOLoop
@@ -34,26 +21,40 @@ from tornado.template import Loader
 from tornado.util import unicode_type
 from uuid import uuid4
 
+try:
+    from signal import signal, SIGUSR1, SIGUSR2
+    haveSignal = True
+except ImportError:
+    haveSignal = False
+
 from mod.profile import Profile
 from mod.settings import (APP, LOG, DEV_API,
                           HTML_DIR, DOWNLOAD_TMP_DIR, DEVICE_KEY, DEVICE_WEBSERVER_PORT,
                           CLOUD_HTTP_ADDRESS, CLOUD_LABS_HTTP_ADDRESS,
                           PLUGINS_HTTP_ADDRESS, PEDALBOARDS_HTTP_ADDRESS, CONTROLCHAIN_HTTP_ADDRESS,
-                          BANKS_JSON_FILE,
+                          USER_BANKS_JSON_FILE,
                           LV2_PLUGIN_DIR, LV2_PEDALBOARDS_DIR, IMAGE_VERSION,
-                          UPDATE_CC_FIRMWARE_FILE, UPDATE_MOD_OS_FILE, USING_256_FRAMES_FILE,
+                          UPDATE_CC_FIRMWARE_FILE, UPDATE_MOD_OS_FILE, UPDATE_MOD_OS_HERLPER_FILE, USING_256_FRAMES_FILE,
                           DEFAULT_ICON_TEMPLATE, DEFAULT_SETTINGS_TEMPLATE, DEFAULT_ICON_IMAGE,
                           DEFAULT_PEDALBOARD, DEFAULT_SNAPSHOT_NAME, DATA_DIR, KEYS_PATH, USER_FILES_DIR,
                           FAVORITES_JSON_FILE, PREFERENCES_JSON_FILE, USER_ID_JSON_FILE,
                           DEV_HOST, UNTITLED_PEDALBOARD_NAME, MODEL_CPU, MODEL_TYPE, PEDALBOARDS_LABS_HTTP_ADDRESS)
 
-from mod import check_environment, jsoncall, safe_json_load, TextFileFlusher, get_hardware_descriptor
+from mod import (
+    TextFileFlusher, WINDOWS,
+    check_environment, jsoncall, safe_json_load,
+    get_hardware_descriptor, get_unique_name, os_sync, symbolify,
+)
 from mod.bank import list_banks, save_banks, remove_pedalboard_from_banks
 from mod.session import SESSION
 from modtools.utils import (
-    init as lv2_init, cleanup as lv2_cleanup, get_plugin_list, get_all_plugins, get_plugin_info, get_non_cached_plugin_info, get_plugin_gui,
-    get_plugin_gui_mini, get_all_pedalboards, get_broken_pedalboards, get_pedalboard_info, get_jack_buffer_size,
-    reset_get_all_pedalboards_cache, update_cached_pedalboard_version,
+    kPedalboardInfoUserOnly, kPedalboardInfoFactoryOnly, kPedalboardInfoBoth,
+    init as lv2_init, cleanup as lv2_cleanup,
+    get_plugin_list, get_all_plugins, get_plugin_info, get_non_cached_plugin_info,
+    get_plugin_gui, get_plugin_gui_mini,
+    get_all_pedalboards, get_all_user_pedalboard_names, get_broken_pedalboards, get_pedalboard_info,
+    get_jack_buffer_size,
+    has_pedalboard_cache, reset_get_all_pedalboards_cache, update_cached_pedalboard_version,
     set_jack_buffer_size, get_jack_sample_rate, set_truebypass_value, set_process_name, reset_xruns
 )
 
@@ -70,6 +71,9 @@ class GlobalWebServerState(object):
 
 gState = GlobalWebServerState()
 gState.favorites = []
+
+def mod_squeeze(text):
+    return squeeze(text.replace("\\", "\\\\").replace("'", "\\'"))
 
 @gen.coroutine
 def install_bundles_in_tmp_dir(callback):
@@ -145,7 +149,7 @@ def install_bundles_in_tmp_dir(callback):
             'installed': installed,
         }
 
-    os.sync()
+    os_sync()
     callback(resp)
 
 def run_command(args, cwd, callback):
@@ -186,14 +190,25 @@ def restart_services(restartJACK2, restartUI):
     if restartUI:
         cmd.append("mod-ui")
     yield gen.Task(run_command, cmd, None)
-    reset_get_all_pedalboards_cache()
+    reset_get_all_pedalboards_cache(kPedalboardInfoBoth)
     lv2_cleanup()
     lv2_init()
 
 @gen.coroutine
 def start_restore():
-    os.sync()
+    os_sync()
     yield gen.Task(SESSION.hmi.restore, datatype='boolean')
+
+def _reset_get_all_pedalboards_cache_with_refresh_1():
+    get_all_pedalboards(kPedalboardInfoUserOnly)
+
+def _reset_get_all_pedalboards_cache_with_refresh_2():
+    get_all_pedalboards(kPedalboardInfoFactoryOnly)
+    IOLoop.instance().add_callback(_reset_get_all_pedalboards_cache_with_refresh_1)
+
+def reset_get_all_pedalboards_cache_with_refresh(ptype):
+    reset_get_all_pedalboards_cache(ptype)
+    IOLoop.instance().add_callback(_reset_get_all_pedalboards_cache_with_refresh_2)
 
 class TimelessRequestHandler(web.RequestHandler):
     def compute_etag(self):
@@ -272,7 +287,7 @@ class RemoteRequestHandler(JsonRequestHandler):
         protocol, domain = match.groups()
         if protocol not in ("http", "https"):
             return
-        if domain != "moddevices.com" and not domain.endswith(".moddevices.com"):
+        if domain not in ("mod.audio", "moddevices.com") and not domain.endswith(".mod.audio") and not domain.endswith(".moddevices.com"):
             return
         self.set_header("Access-Control-Allow-Origin", origin)
 
@@ -590,12 +605,12 @@ class SystemExeChange(JsonRequestHandler):
                 yield gen.Task(run_command, ["systemctl", "stop", servicename], None)
 
         if not finished:
-            os.sync()
+            os_sync()
             self.write(True)
 
     @gen.coroutine
     def reboot(self):
-        os.sync()
+        os_sync()
         yield gen.Task(run_command, ["reboot"], None)
 
 class SystemCleanup(JsonRequestHandler):
@@ -614,7 +629,7 @@ class SystemCleanup(JsonRequestHandler):
         stuffToDelete = []
 
         if banks:
-            stuffToDelete.append(BANKS_JSON_FILE)
+            stuffToDelete.append(USER_BANKS_JSON_FILE)
 
         if favorites:
             stuffToDelete.append(FAVORITES_JSON_FILE)
@@ -645,7 +660,7 @@ class SystemCleanup(JsonRequestHandler):
             yield gen.Task(run_command, ["systemctl", "stop", "jack2"], None)
 
         yield gen.Task(run_command, ["rm", "-rf"] + stuffToDelete, None)
-        os.sync()
+        os_sync()
 
         self.write({
             'ok'   : True,
@@ -667,7 +682,7 @@ class UpdateDownload(MultiPartFileReceiver):
         run_command(['mv', src, dst], None, self.move_file_finished)
 
     def move_file_finished(self, resp):
-        os.sync()
+        os_sync()
         self.result = True
         self.sfr_callback()
 
@@ -678,6 +693,9 @@ class UpdateBegin(JsonRequestHandler):
         if not os.path.exists(UPDATE_MOD_OS_FILE):
             self.write(False)
             return
+
+        with open(UPDATE_MOD_OS_HERLPER_FILE, 'wb') as fh:
+            fh.write(b"")
 
         IOLoop.instance().add_callback(start_restore)
         self.write(True)
@@ -713,7 +731,7 @@ class EffectInstaller(SimpleFileReceiver):
     @gen.engine
     def process_file(self, basename, callback=lambda:None):
         def on_finish(resp):
-            reset_get_all_pedalboards_cache()
+            reset_get_all_pedalboards_cache(kPedalboardInfoBoth)
             self.result = resp
             callback()
         install_package(os.path.join(DOWNLOAD_TMP_DIR, basename), on_finish)
@@ -742,6 +760,18 @@ class EffectList(JsonRequestHandler):
         self.write(data)
 
 class SDKEffectInstaller(EffectInstaller):
+    def set_default_headers(self):
+        if 'Origin' not in self.request.headers.keys():
+            return
+        origin = self.request.headers['Origin']
+        match  = re.match(r'^(\w+)://([^/]*)/?', origin)
+        if match is None:
+            return
+        protocol, domain = match.groups()
+        if protocol != "http" and not domain.endswith(":9000") and not domain.endswith(".mod.audio"):
+            return
+        self.set_header("Access-Control-Allow-Origin", origin)
+
     @web.asynchronous
     @gen.engine
     def post(self):
@@ -767,7 +797,7 @@ class SDKEffectUpdater(JsonRequestHandler):
         if match is None:
             return
         protocol, domain = match.groups()
-        if protocol != "http" or not domain.endswith(":9000"):
+        if protocol != "http" and not domain.endswith(":9000") and not domain.endswith(".mod.audio"):
             return
         self.set_header("Access-Control-Allow-Origin", origin)
 
@@ -881,12 +911,18 @@ class EffectFile(TimelessStaticFileHandler):
 
     def parse_url_path(self, prop):
         try:
-            path = self.modgui[prop]
+            if prop == "custom":
+                path = self.get_argument('filename')
+            else:
+                path = self.modgui[prop]
         except:
             raise web.HTTPError(404)
 
         if prop in ("iconTemplate", "settingsTemplate", "stylesheet", "javascript"):
             self.custom_type = "text/plain; charset=UTF-8"
+
+        elif prop == "custom" and path.endswith(".wasm"):
+            self.custom_type = "application/wasm"
 
         return path
 
@@ -1080,7 +1116,7 @@ class EffectPresetDelete(JsonRequestHandler):
             logging.exception(e)
         self.write(ok)
 
-class RemoteWebSocket(websocket.WebSocketHandler):
+class RemotePedalboardWebSocket(websocket.WebSocketHandler):
     def check_origin(self, origin):
         match = re.match(r'^(\w+)://([^/]*)/?', origin)
         if match is None:
@@ -1088,7 +1124,7 @@ class RemoteWebSocket(websocket.WebSocketHandler):
         protocol, domain = match.groups()
         if protocol not in ("http", "https"):
             return False
-        if domain != "moddevices.com" and not domain.endswith(".moddevices.com"):
+        if domain not in ("mod.audio", "moddevices.com") and not domain.endswith(".mod.audio") and not domain.endswith(".moddevices.com"):
             return False
         return True
 
@@ -1100,6 +1136,41 @@ class RemoteWebSocket(websocket.WebSocketHandler):
         SESSION.websockets[0].write_message("load-pb-remote " + pedalboard_id)
         self.write_message("true")
         self.close()
+
+class RemotePluginWebSocket(websocket.WebSocketHandler):
+    def check_origin(self, origin):
+        match = re.match(r'^(\w+)://([^/]*)/?', origin)
+        if match is None:
+            return False
+        protocol, domain = match.groups()
+        if protocol not in ("http", "https"):
+            return False
+        if domain != "mod.audio" and not domain.endswith(".mod.audio"):
+            return False
+        return True
+
+    @gen.coroutine
+    def on_message(self, package):
+        if not package:
+            hwdesc = get_hardware_descriptor()
+            self.write_message(json.dumps({
+                'bin-compat': hwdesc.get('bin-compat', "Unknown"),
+                'platform': hwdesc.get('platform', "Unknown"),
+                'version': IMAGE_VERSION,
+            }))
+            return
+
+        filename = os.path.join(DOWNLOAD_TMP_DIR, "remote.tar.gz")
+
+        with open(filename, 'wb') as fh:
+            fh.write(b64decode(package))
+
+        resp = yield gen.Task(install_package, filename)
+
+        if resp['ok']:
+            SESSION.msg_callback("rescan " + b64encode(json.dumps(resp).encode("utf-8")).decode("utf-8"))
+
+        self.write_message(json.dumps(resp))
 
 class ServerWebSocket(websocket.WebSocketHandler):
     @gen.coroutine
@@ -1179,6 +1250,10 @@ class ServerWebSocket(websocket.WebSocketHandler):
             rolling = bool(int(data[1]))
             SESSION.host.set_transport_rolling(rolling, True, True, False, False)
 
+        elif cmd == "show_external_ui":
+            inst = data[1]
+            SESSION.ws_show_external_ui(inst)
+
         else:
             print("Unexpected command received over websocket")
 
@@ -1228,21 +1303,23 @@ class PackageUninstall(JsonRequestHandler):
             }
 
         if len(removed) > 0:
-            # Re-save banks, as pedalboards might contain the removed plugins
+            # Re-save banks and reset cache, as pedalboards might contain the removed plugins
             broken = get_broken_pedalboards()
             if len(broken) > 0:
                 list_banks(broken)
+                reset_get_all_pedalboards_cache(kPedalboardInfoBoth)
 
         self.write(resp)
 
 class PedalboardList(JsonRequestHandler):
     def get(self):
-        all = get_all_pedalboards()
-        default_pb = next((p for p in all if p['bundle'] == DEFAULT_PEDALBOARD), None)
+        allpedals = get_all_pedalboards(kPedalboardInfoBoth)
+        # FIXME deal with this on C++ side
+        default_pb = next((p for p in allpedals if p['bundle'] == DEFAULT_PEDALBOARD), None)
         if default_pb:
             default_pb['title'] = "Default"
             default_pb['broken'] = False
-        self.write(all)
+        self.write(allpedals)
 
 class PedalboardSave(JsonRequestHandler):
     @web.asynchronous
@@ -1251,7 +1328,7 @@ class PedalboardSave(JsonRequestHandler):
         title = self.get_argument('title')
         asNew = bool(int(self.get_argument('asNew')))
 
-        def saved_cb(ok):
+        def saved_cb(ok, bundlepath, newTitle):
             self.write({
                 'ok'        : bundlepath is not None,
                 'bundlepath': bundlepath,
@@ -1261,7 +1338,7 @@ class PedalboardSave(JsonRequestHandler):
         bundlepath, newTitle = SESSION.web_save_pedalboard(title, asNew, saved_cb)
 
         if newTitle:
-            reset_get_all_pedalboards_cache()
+            reset_get_all_pedalboards_cache_with_refresh(kPedalboardInfoUserOnly)
         else:
             update_cached_pedalboard_version(bundlepath)
 
@@ -1353,6 +1430,9 @@ class PedalboardLoadBundle(JsonRequestHandler):
             'name': name or ""
         })
 
+        if not has_pedalboard_cache():
+            IOLoop.instance().add_callback(_reset_get_all_pedalboards_cache_with_refresh_2)
+
 class PedalboardLoadRemote(RemoteRequestHandler):
     def post(self, pedalboard_id):
         if len(SESSION.websockets) == 0:
@@ -1393,6 +1473,35 @@ class PedalboardLoadWeb(SimpleFileReceiver):
         os.remove(filename)
         callback()
 
+class PedalboardFactoryCopy(JsonRequestHandler):
+    def get(self):
+        bundlepath = os.path.abspath(self.get_argument('bundlepath'))
+        title = self.get_argument('title')
+
+        if not os.path.exists(bundlepath):
+            self.write(False)
+            return
+
+        newtitle = get_unique_name(title, get_all_user_pedalboard_names()) or title
+        titlesym = symbolify(newtitle)[:16]
+
+        newbundlepath = os.path.join(LV2_PEDALBOARDS_DIR, "%s.pedalboard" % titlesym)
+
+        while os.path.exists(newbundlepath):
+            newbundlepath = os.path.join(LV2_PEDALBOARDS_DIR, "%s-%i.pedalboard" % (titlesym, randint(1,99999)))
+
+        shutil.copytree(bundlepath, newbundlepath)
+
+        # this is surely not the best way to do this, but it is the fastest
+        os.system('sed -i -e \'s/doap:name "%s"/doap:name "%s"/\' %s/*.ttl' % (title, newtitle, newbundlepath))
+
+        reset_get_all_pedalboards_cache_with_refresh(kPedalboardInfoUserOnly)
+
+        pedalboard = get_pedalboard_info(newbundlepath)
+        pedalboard['bundlepath'] = newbundlepath
+        pedalboard['title'] = newtitle
+        self.write(pedalboard)
+
 class PedalboardInfo(JsonRequestHandler):
     def get(self):
         bundlepath = os.path.abspath(self.get_argument('bundlepath'))
@@ -1408,7 +1517,7 @@ class PedalboardRemove(JsonRequestHandler):
 
         shutil.rmtree(bundlepath)
         remove_pedalboard_from_banks(bundlepath)
-        reset_get_all_pedalboards_cache()
+        reset_get_all_pedalboards_cache_with_refresh(kPedalboardInfoUserOnly)
         self.write(True)
 
 class PedalboardImage(TimelessStaticFileHandler):
@@ -1481,6 +1590,7 @@ class PedalboardTransportSetSyncMode(JsonRequestHandler):
         elif mode == "/link":
             transport_sync = Profile.TRANSPORT_SOURCE_ABLETON_LINK
         else:
+            logging.error("Invalid sync mode %s", mode)
             self.write(False)
             return
         ok = yield gen.Task(SESSION.web_set_sync_mode, transport_sync)
@@ -1489,6 +1599,7 @@ class PedalboardTransportSetSyncMode(JsonRequestHandler):
 class SnapshotSave(JsonRequestHandler):
     def post(self):
         ok = SESSION.host.snapshot_save()
+        SESSION.host.save_snapshots_to_disk()
         self.write(ok)
 
 class SnapshotSaveAs(JsonRequestHandler):
@@ -1501,6 +1612,7 @@ class SnapshotSaveAs(JsonRequestHandler):
 
         yield gen.Task(SESSION.host.hmi_report_ss_name_if_current, idx)
 
+        SESSION.host.save_snapshots_to_disk()
         self.write({
             'ok': idx is not None,
             'id': idx,
@@ -1520,6 +1632,7 @@ class SnapshotRename(JsonRequestHandler):
 
         yield gen.Task(SESSION.host.hmi_report_ss_name_if_current, idx)
 
+        SESSION.host.save_snapshots_to_disk()
         self.write({
             'ok': ok,
             'title': title,
@@ -1529,6 +1642,7 @@ class SnapshotRemove(JsonRequestHandler):
     def get(self):
         idx = int(self.get_argument('id'))
         ok  = SESSION.host.snapshot_remove(idx)
+        SESSION.host.save_snapshots_to_disk()
         self.write(ok)
 
 class SnapshotList(JsonRequestHandler):
@@ -1568,14 +1682,11 @@ class BankLoad(JsonRequestHandler):
         # But for the GUI we need to know information about the used pedalboards
 
         # First we get all pedalboard info
-        pedalboards_data = dict((os.path.abspath(pb['bundle']), pb) for pb in get_all_pedalboards())
+        allpedals = get_all_pedalboards(kPedalboardInfoBoth)
+        pedalboards_data = dict((os.path.abspath(pb['bundle']), pb) for pb in allpedals)
 
         # List the broken pedalboards, we do not want to show those
-        broken_pedalboards = []
-
-        for bundlepath, pedalboard in pedalboards_data.items():
-            if pedalboard['broken']:
-                broken_pedalboards.append(bundlepath)
+        broken_pedalboards = tuple(pb['bundle'] for pb in allpedals if pb['broken'])
 
         # Get the banks using our broken pedalboards filter
         banks = list_banks(broken_pedalboards)
@@ -1662,10 +1773,10 @@ class TemplateHandler(TimelessRequestHandler):
         user_id = safe_json_load(USER_ID_JSON_FILE, dict)
 
         with open(DEFAULT_ICON_TEMPLATE, 'r') as fh:
-            default_icon_template = squeeze(fh.read().replace("'", "\\'"))
+            default_icon_template = mod_squeeze(fh.read())
 
         with open(DEFAULT_SETTINGS_TEMPLATE, 'r') as fh:
-            default_settings_template = squeeze(fh.read().replace("'", "\\'"))
+            default_settings_template = mod_squeeze(fh.read())
 
         pbname = SESSION.host.pedalboard_name
         prname = SESSION.host.snapshot_name()
@@ -1679,7 +1790,7 @@ class TemplateHandler(TimelessRequestHandler):
         context = {
             'default_icon_template': default_icon_template,
             'default_settings_template': default_settings_template,
-            'default_pedalboard': DEFAULT_PEDALBOARD,
+            'default_pedalboard': mod_squeeze(DEFAULT_PEDALBOARD),
             'cloud_url': CLOUD_HTTP_ADDRESS,
             'cloud_labs_url': CLOUD_LABS_HTTP_ADDRESS,
             'plugins_url': PLUGINS_HTTP_ADDRESS,
@@ -1690,19 +1801,20 @@ class TemplateHandler(TimelessRequestHandler):
             'version': self.get_argument('v'),
             'bin_compat': hwdesc.get('bin-compat', "Unknown"),
             'codec_truebypass': 'true' if hwdesc.get('codec_truebypass', False) else 'false',
+            'factory_pedalboards': hwdesc.get('factory_pedalboards', False),
             'platform': hwdesc.get('platform', "Unknown"),
             'addressing_pages': int(hwdesc.get('addressing_pages', 0)),
-            'lv2_plugin_dir': LV2_PLUGIN_DIR,
-            'bundlepath': SESSION.host.pedalboard_path,
-            'title':  squeeze(pbname.replace("'", "\\'")),
+            'lv2_plugin_dir': mod_squeeze(LV2_PLUGIN_DIR),
+            'bundlepath': mod_squeeze(SESSION.host.pedalboard_path),
+            'title':  mod_squeeze(pbname),
             'size': json.dumps(SESSION.host.pedalboard_size),
             'fulltitle':  xhtml_escape(fullpbname),
             'titleblend': '' if SESSION.host.pedalboard_name else 'blend',
             'dev_api_class': 'dev_api' if DEV_API else '',
             'using_app': 'true' if APP else 'false',
-            'using_mod': 'true' if DEVICE_KEY or DEV_HOST else 'false',
-            'user_name': squeeze(user_id.get("name", "").replace("'", "\\'")),
-            'user_email': squeeze(user_id.get("email", "").replace("'", "\\'")),
+            'using_mod': 'true' if DEVICE_KEY and hwdesc.get('platform', None) is not None else 'false',
+            'user_name': mod_squeeze(user_id.get("name", "")),
+            'user_email': mod_squeeze(user_id.get("email", "")),
             'favorites': json.dumps(gState.favorites),
             'preferences': json.dumps(SESSION.prefs.prefs),
             'bufferSize': get_jack_buffer_size(),
@@ -1714,10 +1826,10 @@ class TemplateHandler(TimelessRequestHandler):
         bundlepath = self.get_argument('bundlepath')
 
         with open(DEFAULT_ICON_TEMPLATE, 'r') as fh:
-            default_icon_template = squeeze(fh.read().replace("'", "\\'"))
+            default_icon_template = mod_squeeze(fh.read())
 
         with open(DEFAULT_SETTINGS_TEMPLATE, 'r') as fh:
-            default_settings_template = squeeze(fh.read().replace("'", "\\'"))
+            default_settings_template = mod_squeeze(fh.read())
 
         try:
             pedalboard = get_pedalboard_info(bundlepath)
@@ -1779,7 +1891,7 @@ class BulkTemplateLoader(TimelessRequestHandler):
                 contents = fh.read()
             self.write("TEMPLATES['%s'] = '%s';\n\n"
                        % (template[:-5],
-                          squeeze(contents.replace("'", "\\'"))
+                          mod_squeeze(contents)
                           )
                        )
         self.finish()
@@ -1841,7 +1953,7 @@ class SetBufferSize(JsonRequestHandler):
             elif os.path.exists(USING_256_FRAMES_FILE):
                 os.remove(USING_256_FRAMES_FILE)
 
-            os.sync()
+            os_sync()
 
         newsize = set_jack_buffer_size(size)
         self.write({
@@ -2024,7 +2136,7 @@ class TokensDelete(JsonRequestHandler):
 
         if os.path.exists(tokensConf):
             os.remove(tokensConf)
-            os.sync()
+            os_sync()
 
         self.write(True)
 
@@ -2104,6 +2216,12 @@ class FilesList(JsonRequestHandler):
 
         elif filetype == "sfz":
             return ("SFZ Instruments", (".sfz",))
+
+        elif filetype == "aidadspmodel":
+            return ("Aida DSP Models", (".aidax",".json",))
+
+        elif filetype == "nammodel":
+            return ("NAM Models", (".nam",))
 
         else:
             return (None, ())
@@ -2195,6 +2313,7 @@ application = web.Application(
             (r"/pedalboard/load_bundle/", PedalboardLoadBundle),
             (r"/pedalboard/load_remote/*(/[A-Za-z0-9_/]+[^/])/?", PedalboardLoadRemote),
             (r"/pedalboard/load_web/", PedalboardLoadWeb),
+            (r"/pedalboard/factorycopy/", PedalboardFactoryCopy),
             (r"/pedalboard/info/", PedalboardInfo),
             (r"/pedalboard/remove/", PedalboardRemove),
             (r"/pedalboard/image/(screenshot|thumbnail).png", PedalboardImage),
@@ -2264,11 +2383,18 @@ application = web.Application(
             (r"/js/templates.js$", BulkTemplateLoader),
 
             (r"/websocket/?$", ServerWebSocket),
-            (r"/rpbsocket/?$", RemoteWebSocket),
+            (r"/rpbsocket/?$", RemotePedalboardWebSocket),
+            (r"/rplsocket/?$", RemotePluginWebSocket),
 
             (r"/(.*)", TimelessStaticFileHandler, {"path": HTML_DIR}),
         ],
         debug = bool(LOG >= 2), **settings)
+
+def signal_hmi_screenshot():
+    with open("/root/hmi-screenshot-mode", 'r') as fh:
+        screen = int(fh.read().strip())
+    os.remove("/root/hmi-screenshot-mode")
+    SESSION.hmi.screenshot(screen)
 
 def signal_device_firmware_updated():
     os.remove(UPDATE_CC_FIRMWARE_FILE)
@@ -2285,7 +2411,7 @@ def signal_boot_check():
     run_command(["hmi-reset"], None, signal_boot_check_step2)
 
 def signal_boot_check_step2(r):
-    os.sync()
+    os_sync()
     run_command(["reboot"], None, None)
 
 def signal_upgrade_check():
@@ -2300,7 +2426,9 @@ def signal_upgrade_check():
 
 def signal_recv(sig, _=0):
     if sig == SIGUSR1:
-        if os.path.exists(UPDATE_CC_FIRMWARE_FILE):
+        if os.path.exists("/root/hmi-screenshot-mode"):
+            func = signal_hmi_screenshot
+        elif os.path.exists(UPDATE_CC_FIRMWARE_FILE):
             func = signal_device_firmware_updated
         else:
             func = SESSION.signal_save
@@ -2335,12 +2463,12 @@ def prepare(isModApp = False):
         get_all_plugins()
         print("Done!")
 
-    if not isModApp:
+    if haveSignal and not isModApp:
         signal(SIGUSR1, signal_recv)
         signal(SIGUSR2, signal_recv)
         set_process_name("mod-ui")
 
-    application.listen(DEVICE_WEBSERVER_PORT, address="0.0.0.0")
+    application.listen(DEVICE_WEBSERVER_PORT, address=("localhost" if APP else "0.0.0.0"))
 
     def checkhost():
         if SESSION.host.readsock is None or SESSION.host.writesock is None:

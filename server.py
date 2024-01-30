@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2012-2023 MOD Audio UG
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 # FOR DEVELOPMENT PURPOSES ONLY
 
 import os, sys
 from datetime import datetime
-from os.path import join
 from random import randint
 
 
@@ -19,7 +20,7 @@ def create_dummy_credentials():
             fh.write(uid)
     if not os.path.isfile(os.environ['MOD_DEVICE_KEY']):
         try:
-            from Crypto.PublicKey import RSA
+            from Cryptodome.PublicKey import RSA
             key = RSA.generate(2048)
             with open(os.environ['MOD_DEVICE_KEY'], 'wb') as fh:
                 fh.write(key.exportKey('PEM'))
@@ -28,28 +29,36 @@ def create_dummy_credentials():
         except Exception as ex:
             print('Can\'t create a device key: {0}'.format(ex))
 
-ROOT = os.path.dirname(os.path.realpath(__file__))
-DATA_DIR = join(ROOT, 'data')
+if os.path.isfile(sys.argv[0]):
+    # running through cx-freeze, do an early import of everything we need
+    import json
+    import uuid
+    from tornado import gen, iostream, web, websocket
+    ROOT = os.path.dirname(sys.argv[0])
+else:
+    ROOT = os.path.dirname(os.path.realpath(__file__))
+    sys.path = [ os.path.dirname(os.path.realpath(__file__)) ] + sys.path
+
+DATA_DIR = os.environ.get("MOD_DATA_DIR", os.path.join(ROOT, 'data'))
+
 os.makedirs(DATA_DIR, exist_ok=True)
 
 os.environ['MOD_DEV_ENVIRONMENT'] = os.environ.get("MOD_DEV_ENVIRONMENT", '1')
 os.environ['MOD_DATA_DIR'] = DATA_DIR
 os.environ['MOD_LOG'] = os.environ.get("MOD_LOG", '1')
-os.environ['MOD_KEY_PATH'] = join(DATA_DIR, 'keys')
+os.environ['MOD_KEY_PATH'] = os.path.join(DATA_DIR, 'keys')
 os.environ['MOD_DEVICE_WEBSERVER_PORT'] = '8888'
-os.environ['MOD_HTML_DIR'] = join(ROOT, 'html')
-os.environ['MOD_DEFAULT_PEDALBOARD'] = join(ROOT, 'default.pedalboard')
-os.environ['MOD_DEVICE_KEY'] = join(DATA_DIR, 'rsa')
-os.environ['MOD_DEVICE_TAG'] = join(DATA_DIR, 'tag')
-os.environ['MOD_DEVICE_UID'] = join(DATA_DIR, 'uid')
-os.environ['MOD_API_KEY'] = join(DATA_DIR, 'mod_api_key.pub')
+os.environ['MOD_HTML_DIR'] = os.path.join(ROOT, 'html')
+os.environ['MOD_DEFAULT_PEDALBOARD'] = os.path.join(ROOT, 'default.pedalboard')
+os.environ['MOD_DEVICE_KEY'] = os.path.join(DATA_DIR, 'rsa')
+os.environ['MOD_DEVICE_TAG'] = os.path.join(DATA_DIR, 'tag')
+os.environ['MOD_DEVICE_UID'] = os.path.join(DATA_DIR, 'uid')
+os.environ['MOD_API_KEY'] = os.path.join(DATA_DIR, 'mod_api_key.pub')
 
 create_dummy_credentials()
 
 if not os.path.isfile(os.environ['MOD_API_KEY']):
     print('WARN: Missing file {0} with the public API KEY'.format(os.environ['MOD_API_KEY']))
-
-sys.path = [ os.path.dirname(os.path.realpath(__file__)) ] + sys.path
 
 from mod import webserver
 
