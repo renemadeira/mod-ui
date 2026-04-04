@@ -218,6 +218,31 @@ def midi_port_alias_to_name(alias, withSpaces):
           .replace("/midi_capture_",space+"MIDI"+space)\
           .replace("/midi_playback_",space+"MIDI"+space)
 
+def midi_jack_port_to_ui_symbol(portname):
+    return symbolify(portname.split(":",1)[-1])
+
+def _midi_bridge_title_from_portname(portname, withSpaces):
+    if not portname.startswith(("system:capture_", "system:playback_")):
+        return None
+    try:
+        idx = int(portname.rsplit("_", 1)[-1])
+    except Exception:
+        return None
+    if idx > 2:
+        idx -= 2
+    space = " " if withSpaces else "_"
+    return "Bridge%sMIDI%s%d" % (space, space, idx)
+
+def midi_port_name_to_title(portname, withSpaces):
+    bridge_title = _midi_bridge_title_from_portname(portname, withSpaces)
+    if bridge_title is not None:
+        return bridge_title
+    alias = get_jack_port_alias(portname)
+    if alias:
+        return midi_port_alias_to_name(alias, withSpaces)
+    raw = portname.split(":",1)[-1].replace("_", " ").title()
+    return raw if withSpaces else raw.replace(" ", "_")
+
 def get_all_good_and_bad_pedalboards(ptype):
     allpedals  = get_all_pedalboards(ptype)
     goodpedals = []
@@ -583,10 +608,7 @@ class Host(object):
             # new ports are ignored under midi aggregated mode
             return
 
-        alias = get_jack_port_alias(name)
-        if not alias:
-            return
-        alias = midi_port_alias_to_name(alias, True)
+        alias = midi_port_name_to_title(name, True)
 
         if not isOutput:
             connect_jack_ports(name, "mod-host:midi_in")
@@ -597,13 +619,13 @@ class Host(object):
                 split = port_symbol.split(";")
 
                 if len(split) == 1:
-                    oldnode = "/graph/" + port_symbol.split(":",1)[-1]
+                    oldnode = "/graph/" + midi_jack_port_to_ui_symbol(port_symbol)
                     port_symbol = name
                 elif isOutput:
-                    oldnode = "/graph/" + split[1].split(":",1)[-1]
+                    oldnode = "/graph/" + midi_jack_port_to_ui_symbol(split[1])
                     split[1] = name
                 else:
-                    oldnode = "/graph/" + split[0].split(":",1)[-1]
+                    oldnode = "/graph/" + midi_jack_port_to_ui_symbol(split[0])
                     split[0] = name
                 port_symbol = ";".join(split)
 
@@ -612,14 +634,17 @@ class Host(object):
         else:
             return
 
-        index = int(name[-1])
+        try:
+            index = int(name.rsplit("_", 1)[-1])
+        except Exception:
+            index = 1
         title = self.get_port_name_alias(name).replace("-","_").replace(" ","_")
-        newnode = "/graph/" + name.split(":",1)[-1]
+        newnode = "/graph/" + midi_jack_port_to_ui_symbol(name)
 
         if name.startswith("nooice"):
             index += 100
 
-        self.msg_callback("add_hw_port /graph/%s midi %i %s %i" % (name.split(":",1)[-1], int(isOutput), title, index))
+        self.msg_callback("add_hw_port /graph/%s midi %i %s %i" % (midi_jack_port_to_ui_symbol(name), int(isOutput), title, index))
 
         for i in reversed(range(len(port_conns))):
             if port_conns[i][0] == oldnode:
@@ -2089,8 +2114,7 @@ class Host(object):
 
         # MIDI In
         if self.midi_aggregated_mode:
-            if has_midi_merger_output_port():
-                websocket.write_message("add_hw_port /graph/midi_merger_out midi 0 All_MIDI_In 1")
+            websocket.write_message("add_hw_port /graph/midi_merger_out midi 0 All_MIDI_In 1")
 
         else:
             if self.hasSerialMidiIn:
@@ -2101,19 +2125,12 @@ class Host(object):
                 name = ports[i]
                 if name not in midiports and not name.startswith("%s:midi_" % self.jack_external_prefix):
                     continue
-                alias = get_jack_port_alias(name)
-
-                if alias:
-                    title = midi_port_alias_to_name(alias, False)
-                else:
-                    title = name.split(":",1)[-1].title()
-                title = title.replace(" ","_")
-                websocket.write_message("add_hw_port /graph/%s midi 0 %s %i" % (name.split(":",1)[-1], title, i+1))
+                title = midi_port_name_to_title(name, False).replace(" ","_")
+                websocket.write_message("add_hw_port /graph/%s midi 0 %s %i" % (midi_jack_port_to_ui_symbol(name), title, i+1))
 
         # MIDI Out
         if self.midi_aggregated_mode:
-            if has_midi_broadcaster_input_port():
-                websocket.write_message("add_hw_port /graph/midi_broadcaster_in midi 1 All_MIDI_Out 1")
+            websocket.write_message("add_hw_port /graph/midi_broadcaster_in midi 1 All_MIDI_Out 1")
 
         else:
             if self.hasSerialMidiOut:
@@ -2124,13 +2141,8 @@ class Host(object):
                 name = ports[i]
                 if name not in midiports and not name.startswith("%s:midi_" % self.jack_external_prefix):
                     continue
-                alias = get_jack_port_alias(name)
-                if alias:
-                    title = midi_port_alias_to_name(alias, False)
-                else:
-                    title = name.split(":",1)[-1].title()
-                title = title.replace(" ","_")
-                websocket.write_message("add_hw_port /graph/%s midi 1 %s %i" % (name.split(":",1)[-1], title, i+1))
+                title = midi_port_name_to_title(name, False).replace(" ","_")
+                websocket.write_message("add_hw_port /graph/%s midi 1 %s %i" % (midi_jack_port_to_ui_symbol(name), title, i+1))
 
         if self.midi_loopback_enabled:
             websocket.write_message("add_hw_port /graph/midi_loopback midi 1 MIDI_Loopback 42")
@@ -3393,6 +3405,12 @@ class Host(object):
             if data[2] == "capture_2":
                 return self.jack_hw_capture_prefix + "2"
 
+            # Resolve symbolified separated MIDI hardware symbols.
+            for port_symbol, _, _ in self.midiports:
+                for candidate in port_symbol.split(";"):
+                    if midi_jack_port_to_ui_symbol(candidate) == data[2]:
+                        return candidate
+
             # Default guess
             return "system:%s" % data[2]
 
@@ -3506,9 +3524,9 @@ class Host(object):
             mappedOldMidiIns   = dict((p['symbol'], p['name']) for p in pb['hardware']['midi_ins'])
             mappedOldMidiOuts  = dict((p['symbol'], p['name']) for p in pb['hardware']['midi_outs'])
             mappedOldMidiOuts2 = dict((p['name'], p['symbol']) for p in pb['hardware']['midi_outs'])
-            mappedNewMidiIns   = OrderedDict((midi_port_alias_to_name(get_jack_port_alias(p), True),
+            mappedNewMidiIns   = OrderedDict((midi_port_name_to_title(p, True),
                                             p.split(":",1)[-1]) for p in get_jack_hardware_ports(False, False))
-            mappedNewMidiOuts  = OrderedDict((midi_port_alias_to_name(get_jack_port_alias(p), True),
+            mappedNewMidiOuts  = OrderedDict((midi_port_name_to_title(p, True),
                                             p.split(":",1)[-1]) for p in get_jack_hardware_ports(False, True))
 
         else:
@@ -6742,44 +6760,48 @@ _:b%i
     # returns (devsInUse, devList, names, midiAggregatedMode)
     def get_midi_ports(self):
         out_ports = {}
+        out_ports_normalized = {}
         full_ports = {}
+
+        def normalize_midi_title(title):
+            return title.lower().replace("(capture)", "").replace("(playback)", "").strip()
 
         # Current setup
         for port_symbol, port_alias, _ in self.midiports:
             port_aliases = port_alias.split(";",1)
             port_alias   = port_aliases[0]
-            if len(port_aliases) != 1:
-                out_ports[port_alias] = port_symbol
+            if ";" in port_symbol:
+                # `port_symbol` can be "midi_in;midi_out".
+                # Store only the output symbol for pairing lookups,
+                # otherwise we'd recursively build "in;in;out" IDs.
+                outsymbol = port_symbol.split(";",1)[1]
+                out_ports[port_alias] = outsymbol
+                out_ports_normalized[normalize_midi_title(port_alias)] = outsymbol
             full_ports[port_symbol] = port_alias
 
         # Extra MIDI Outs
         ports = get_jack_hardware_ports(False, True)
         for port in ports:
             if port.startswith("system_midi:"):
-                alias = port[12:].replace(" (in)","")
-            elif not port.startswith(("system:midi_", "nooice")):
-                continue
+                title = port[12:].replace(" (in)","")
             else:
-                alias = get_jack_port_alias(port)
-            if not alias:
-                continue
-            title = midi_port_alias_to_name(alias, True)
+                title = midi_port_name_to_title(port, True)
             out_ports[title] = port
+            out_ports_normalized[normalize_midi_title(title)] = port
 
         # Extra MIDI Ins
         ports = get_jack_hardware_ports(False, False)
         for port in ports:
             if port.startswith("system_midi:"):
-                alias = port[12:].replace(" (out)","")
-            elif not port.startswith(("system:midi_", "nooice")):
-                continue
+                title = port[12:].replace(" (out)","")
             else:
-                alias = get_jack_port_alias(port)
-            if not alias:
-                continue
-            title = midi_port_alias_to_name(alias, True)
+                title = midi_port_name_to_title(port, True)
             if title in out_ports.keys():
                 port = "%s;%s" % (port, out_ports[title])
+            else:
+                normalized = normalize_midi_title(title)
+                if normalized in out_ports_normalized:
+                    port = "%s;%s" % (port, out_ports_normalized[normalized])
             full_ports[port] = title
 
         devsInUse = []
@@ -6802,12 +6824,7 @@ _:b%i
         return (devsInUse, devList, names, self.midi_aggregated_mode)
 
     def get_port_name_alias(self, portname):
-        alias = get_jack_port_alias(portname)
-
-        if alias:
-            return midi_port_alias_to_name(alias, True)
-
-        return portname.split(":",1)[-1].title()
+        return midi_port_name_to_title(portname, True)
 
     # Set the selected MIDI devices, aggregated mode and loopback enabled
     @gen.coroutine
@@ -6845,10 +6862,10 @@ _:b%i
 
                 if ";" in port_symbol:
                     inp, outp = port_symbol.split(";",1)
-                    self.msg_callback("remove_hw_port /graph/%s" % (inp.split(":",1)[-1]))
-                    self.msg_callback("remove_hw_port /graph/%s" % (outp.split(":",1)[-1]))
+                    self.msg_callback("remove_hw_port /graph/%s" % (midi_jack_port_to_ui_symbol(inp)))
+                    self.msg_callback("remove_hw_port /graph/%s" % (midi_jack_port_to_ui_symbol(outp)))
                 else:
-                    self.msg_callback("remove_hw_port /graph/%s" % (port_symbol.split(":",1)[-1]))
+                    self.msg_callback("remove_hw_port /graph/%s" % (midi_jack_port_to_ui_symbol(port_symbol)))
 
             self.midiports = []
 
@@ -6890,14 +6907,33 @@ _:b%i
 
     # Will remove or add new JACK ports (in mod-ui) as needed
     def set_midi_devices_separated(self, newDevs):
+        def get_port_index(name):
+            # Prefer numeric suffix after '_' when available (e.g. capture_3/playback_3).
+            if "_" in name:
+                suffix = name.rsplit("_", 1)[-1]
+                if suffix.isdigit():
+                    idx = int(suffix)
+                    return idx if idx > 0 else 1
+            # Fallback to trailing digits, otherwise a stable default.
+            digits = []
+            for ch in reversed(name):
+                if ch.isdigit():
+                    digits.append(ch)
+                else:
+                    break
+            if digits:
+                idx = int("".join(reversed(digits)))
+                return idx if idx > 0 else 1
+            return 1
+
         def add_port(name, title, isOutput):
-            index = int(name[-1])
+            index = get_port_index(name)
             title = title.replace("-","_").replace(" ","_")
 
             if name.startswith("nooice"):
                 index += 100
 
-            self.msg_callback("add_hw_port /graph/%s midi %i %s %i" % (name.split(":",1)[-1], int(isOutput), title, index))
+            self.msg_callback("add_hw_port /graph/%s midi %i %s %i" % (midi_jack_port_to_ui_symbol(name), int(isOutput), title, index))
 
         def remove_port(name):
             removed_conns = []
@@ -6913,7 +6949,7 @@ _:b%i
                 self.connections.remove(ports)
                 self.msg_callback("disconnect %s %s" % (ports[0], ports[1]))
 
-            self.msg_callback("remove_hw_port /graph/%s" % (name.split(":",1)[-1]))
+            self.msg_callback("remove_hw_port /graph/%s" % (midi_jack_port_to_ui_symbol(name)))
 
         midiportIds = tuple(i[0] for i in self.midiports)
 
