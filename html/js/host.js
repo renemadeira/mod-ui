@@ -52,6 +52,9 @@ $('document').ready(function() {
             return
         }
         if (cmd == "cc-device-updated") {
+            if (typeof PLATFORM !== "undefined" && PLATFORM === "bridge") {
+                return
+            }
             desktop.ccDeviceUpdateFinished()
             return
         }

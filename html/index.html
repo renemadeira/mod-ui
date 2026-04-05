@@ -85,8 +85,9 @@
     }
 
     var CLOUD_TERMS_ACCEPTED = PREFERENCES['cloud-terms-accepted'] === "true";
+    var IS_BRIDGE = PLATFORM === "bridge";
     var USING_MOD_DESKTOP = {{using_desktop}};
-    var USING_MOD_DEVICE = {{using_mod}} && !{{using_desktop}};
+    var USING_MOD_DEVICE = {{using_mod}} && !{{using_desktop}} && !IS_BRIDGE;
 
     /*
     var INFO = {
@@ -183,6 +184,12 @@ $('document').ready(function() {
         // show other stuff to make it less empty
         $('#mod-xruns').show()
         $('#mod-status').show().statusTooltip('updatePosition')
+
+        if (IS_BRIDGE) {
+            $('#mod-devices').hide()
+            $('#mod-devices-window').hide()
+            $('#cc-device-update-window').hide()
+        }
     }
 
     if (PREFERENCES['plugins-folded'] == "true") {
@@ -220,7 +227,10 @@ $('document').ready(function() {
     // start of terms handling
 
     var terms = $('#mod-cloud-terms')
-    if (PREFERENCES['cloud-terms-accepted'] !== undefined && (USING_MOD_DEVICE || PREFERENCES['cloud-terms-accepted'] === "true")) {
+    if (IS_BRIDGE) {
+        terms.hide()
+        $('#pedalboard-info').find('.js-cloud').hide()
+    } else if (PREFERENCES['cloud-terms-accepted'] !== undefined && (USING_MOD_DEVICE || PREFERENCES['cloud-terms-accepted'] === "true")) {
         if (CLOUD_TERMS_ACCEPTED) {
             desktop.setupMatomo()
             terms.hide()

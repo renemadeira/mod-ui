@@ -143,6 +143,7 @@
         "python": {},
         "uname": {}
     }
+    var IS_BRIDGE = false
 
 function bool2str(ok) {
     return ok ? "true" : "false"
@@ -154,11 +155,30 @@ function refresh_sysinfo() {
         method: 'GET',
         success: function (info) {
             INFO = info
+            IS_BRIDGE = (info.platform == "bridge")
             $("#info-system-unit").text(INFO.hwname)
             $("#info-system-date").text(INFO.sysdate)
             $("#info-kernel-machine").text(INFO.uname.machine)
             $("#info-kernel-release").text(INFO.uname.release)
             $("#info-kernel-version").text(INFO.uname.version)
+            if (info.platform == "bridge") {
+                // Bridge mode: show current values but disable runtime hardware controls.
+                $("#prefs-audio-256-frames")
+                    .prop("disabled", true)
+                    .css('pointer-events', 'none')
+                $("#prefs-audio-256-frames").closest("label").css({
+                    'opacity': 0.7,
+                    'cursor': 'default',
+                })
+                $("#prefs-audio-256-frames").off('click change mousedown mouseup touchstart touchend').on('click change mousedown mouseup touchstart touchend', function (e) {
+                    e.stopImmediatePropagation()
+                    e.preventDefault()
+                    return false
+                })
+
+                $("#tab-device-updates").hide()
+                $("#settings-page-device-updates").hide()
+            }
             if (info.platform != "duox" || info.model == "duox:aarch64-a53") {
                 $("#prefs-audio-separate-spdif-outs_div").hide()
             }
@@ -507,6 +527,10 @@ $('document').ready(function() {
     // ----------------------------------------------------------------------------------------------------------------
 
     $('#cc-device-update-window').find('.js-cancel').click(function () {
+        if (!CONTROLCHAIN_URL || IS_BRIDGE) {
+            $('#cc-device-update-window').hide()
+            return false
+        }
         $.ajax({
             url: '/controlchain/cancel/',
             type: 'POST',
@@ -669,7 +693,12 @@ $('document').ready(function() {
     // ----------------------------------------------------------------------------------------------------------------
     // --- Audio Server
 
-    $("#prefs-audio-256-frames").click(function () {
+    $("#prefs-audio-256-frames").click(function (e) {
+        if (INFO.platform == "bridge") {
+            e.stopImmediatePropagation()
+            e.preventDefault()
+            return false
+        }
         var bufferSize = $(this).prop("checked") ? '256' : '128'
         write_file_contents("jack-buffer-size", bufferSize)
 
@@ -846,32 +875,37 @@ $('document').ready(function() {
 
     var deviceUpdatesRespDev, deviceUpdatesRespVer
 
-    $.ajax({
-        method: 'GET',
-        url: CONTROLCHAIN_URL + '/devices',
-        success: function (resp) {
-            deviceUpdatesRespDev = resp
-            refresh_device_updates(deviceUpdatesRespDev, deviceUpdatesRespVer)
-        },
-        error: function () {
-            console.log("Error: failed to get devices information")
-        },
-        cache: false,
-        dataType: 'json'
-    })
+    if (CONTROLCHAIN_URL) {
+        $.ajax({
+            method: 'GET',
+            url: CONTROLCHAIN_URL + '/devices',
+            success: function (resp) {
+                deviceUpdatesRespDev = resp
+                refresh_device_updates(deviceUpdatesRespDev, deviceUpdatesRespVer)
+            },
+            error: function () {
+                console.log("Error: failed to get devices information")
+            },
+            cache: false,
+            dataType: 'json'
+        })
 
-    $.ajax({
-        method: 'GET',
-        url: CONTROLCHAIN_URL + '/versions',
-        success: function (resp) {
-            deviceUpdatesRespVer = resp
-            refresh_device_updates(deviceUpdatesRespDev, deviceUpdatesRespVer)
-        },
-        error: function () {
-        },
-        cache: false,
-        dataType: 'json'
-    })
+        $.ajax({
+            method: 'GET',
+            url: CONTROLCHAIN_URL + '/versions',
+            success: function (resp) {
+                deviceUpdatesRespVer = resp
+                refresh_device_updates(deviceUpdatesRespDev, deviceUpdatesRespVer)
+            },
+            error: function () {
+            },
+            cache: false,
+            dataType: 'json'
+        })
+    } else {
+        $("#tab-device-updates").hide()
+        $("#settings-page-device-updates").hide()
+    }
 
     // ----------------------------------------------------------------------------------------------------------------
 

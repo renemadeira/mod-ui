@@ -740,6 +740,7 @@ function HardwareManager(options) {
     this.open = function (instance, port, pluginLabel) {
         var instanceAndSymbol = instance+"/"+port.symbol
         var currentAddressing = self.addressingsData[instanceAndSymbol] || {}
+        var isBridge = (typeof PLATFORM !== "undefined" && PLATFORM === "bridge")
 
         // Renders the window
         var form = $(options.renderForm(instance, port))
@@ -787,6 +788,11 @@ function HardwareManager(options) {
           }
         }
 
+        // Bridge mode has no HMI or Control Chain addressing.
+        if (isBridge && (typeInputVal === deviceOption || typeInputVal === ccOption)) {
+          typeInputVal = kNullAddressURI
+        }
+
         typeInput.val(typeInputVal)
 
         var actuators = self.availableActuators(instance, port, currentAddressing.tempo)
@@ -800,6 +806,10 @@ function HardwareManager(options) {
             }
             // Hide Device tab under mod-app
             if (options.isApp() && (jbtn.attr('data-value') === deviceOption || jbtn.attr('data-value') === ccOption)) {
+              jbtn.hide()
+            }
+            // Hide HMI + Control Chain tabs on bridge platform.
+            else if (isBridge && (jbtn.attr('data-value') === deviceOption || jbtn.attr('data-value') === ccOption)) {
               jbtn.hide()
             }
             // Hide MIDI tab if not available
@@ -830,11 +840,18 @@ function HardwareManager(options) {
           addressings = self.addressingsByActuator[uri]
 
           if (ccUri) {
+            if (isBridge) {
+              continue
+            }
             ccActuators.push(actuator)
             self.addOption(addressings, actuator, currentAddressing, ccActuatorSelect)
           } else { // cvUri
             self.addOption(addressings, actuator, currentAddressing, cvPortSelect)
           }
+        }
+
+        if (isBridge) {
+          form.find('.cc-select, .no-cc, .cc-in-use').hide()
         }
 
         if (ccActuators.length === 0) {

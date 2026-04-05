@@ -8,7 +8,7 @@ from datetime import timedelta
 from tornado import iostream, gen
 from tornado.ioloop import IOLoop, PeriodicCallback
 
-from mod import safe_json_load, TextFileFlusher
+from mod import safe_json_load, TextFileFlusher, get_hardware_descriptor
 from mod.development import FakeHost, FakeHMI
 from mod.hmi import HMI
 from mod.recorder import Recorder, Player
@@ -72,6 +72,7 @@ class Session(object):
         self.screenshot_needed = False
         self.screenshot_generator = ScreenshotGenerator()
         self.websockets = []
+        self.is_bridge = (get_hardware_descriptor().get('platform', "") == "bridge")
 
         # Used in mod-app to know when the current pedalboard changed
         self.pedalboard_changed_callback = lambda ok,bundlepath,title:None
@@ -96,6 +97,8 @@ class Session(object):
         self.host.hmi_save_current_pedalboard(lambda r:None)
 
     def signal_device_updated(self):
+        if self.is_bridge:
+            return
         self.msg_callback("cc-device-updated")
 
     def signal_disconnect(self):
@@ -107,9 +110,22 @@ class Session(object):
         self.host.end_session(lambda r:None)
 
     def get_hardware_actuators(self):
-        return self.host.addressings.get_actuators()
+        actuators = self.host.addressings.get_actuators()
+        if not self.is_bridge:
+            return actuators
+
+        # Bridge mode: keep only MIDI learn/BPM/CV, disable HMI and Control Chain support.
+        filtered = []
+        for actuator in actuators:
+            uri = actuator.get('uri', "")
+            if uri == "/midi-learn" or uri == "/bpm" or uri.startswith("/midi-custom_") or uri.startswith("/cv"):
+                filtered.append(actuator)
+        return filtered
 
     def wait_for_hardware_if_needed(self, callback):
+        if self.is_bridge:
+            callback(None)
+            return
         return self.host.addressings.wait_for_cc_if_needed(callback)
 
     # -----------------------------------------------------------------------------------------------------------------

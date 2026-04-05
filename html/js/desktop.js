@@ -3,6 +3,7 @@
 
 function Desktop(elements) {
     var self = this
+    var isBridge = (typeof PLATFORM !== "undefined" && PLATFORM === "bridge")
 
     // The elements below are expected to be all defined in HTML and passed as parameter
     elements = $.extend({
@@ -379,6 +380,11 @@ function Desktop(elements) {
     }
 
     this.authenticateDevice = function (callback) {
+        if (PLATFORM === "bridge") {
+            callback(false)
+            return
+        }
+
         $.ajax({
             method: 'GET',
             url: SITEURL + '/devices/nonce',
@@ -479,34 +485,49 @@ function Desktop(elements) {
         }
     }
 
-    elements.devicesIcon.statusTooltip()
-    this.ccDeviceManager = new ControlChainDeviceManager({
-        devicesIcon: elements.devicesIcon,
-        devicesWindow: elements.devicesWindow,
-        updateInfoWindow: elements.updateDeviceWindow,
-        setIconTooltip: function (msg) {
-            elements.devicesIcon.statusTooltip('message', msg, true)
-        },
-        showNotification: function (msg) {
-            if (! self.loadingPeldaboardForFirstTime) {
-                new Notification('info', msg, 5000)
-            }
-        },
-        cancelDownload: function (callback) {
-            $.ajax({
-                url: '/controlchain/cancel/',
-                type: 'POST',
-                success: function () {
-                    callback()
-                },
-                error: function () {
-                    callback()
-                },
-                cache: false,
-                dataType: 'json'
-            })
-        },
-    })
+    this.ccDeviceManager = {
+        deviceAdded: function () {},
+        deviceRemoved: function () {},
+        deviceConnected: function () {},
+        deviceDisconnected: function () {},
+        showUpdateWindow: function () {},
+        hideUpdateWindow: function () {},
+    }
+
+    if (!isBridge) {
+        elements.devicesIcon.statusTooltip()
+        this.ccDeviceManager = new ControlChainDeviceManager({
+            devicesIcon: elements.devicesIcon,
+            devicesWindow: elements.devicesWindow,
+            updateInfoWindow: elements.updateDeviceWindow,
+            setIconTooltip: function (msg) {
+                elements.devicesIcon.statusTooltip('message', msg, true)
+            },
+            showNotification: function (msg) {
+                if (! self.loadingPeldaboardForFirstTime) {
+                    new Notification('info', msg, 5000)
+                }
+            },
+            cancelDownload: function (callback) {
+                $.ajax({
+                    url: '/controlchain/cancel/',
+                    type: 'POST',
+                    success: function () {
+                        callback()
+                    },
+                    error: function () {
+                        callback()
+                    },
+                    cache: false,
+                    dataType: 'json'
+                })
+            },
+        })
+    } else {
+        elements.devicesIcon.hide()
+        elements.devicesWindow.hide()
+        elements.updateDeviceWindow.hide()
+    }
 
     this.ccDeviceAdded = function (dev_uri, label, labelsuffix, version) {
         self.ccDeviceManager.deviceAdded(dev_uri, label+labelsuffix, version)
@@ -613,6 +634,10 @@ function Desktop(elements) {
     })
 
     this.checkHardwareDeviceVersion = function (dev_uri, label, version) {
+        if (PLATFORM === "bridge") {
+            return
+        }
+
         if (self.cloudAccessToken == null) {
             self.authenticateDevice(function (ok) {
                 if (ok && self.cloudAccessToken != null) {
@@ -740,6 +765,10 @@ function Desktop(elements) {
     }
 
     this.setupDeviceAuthentication = function () {
+        if (PLATFORM === "bridge") {
+            return
+        }
+
         self.authenticateDevice(function (ok) {
             if (ok) {
                 console.log("MOD authentication succeeded")
@@ -752,6 +781,10 @@ function Desktop(elements) {
     }
 
     this.setupMatomo = function() {
+        if (PLATFORM === "bridge") {
+            return
+        }
+
         var _mtm = window._mtm = window._mtm || [];
         _mtm.push({'mtm.startTime': (new Date().getTime()), 'event': 'mtm.Start'});
         (function() {
@@ -1082,28 +1115,41 @@ function Desktop(elements) {
     elements.bypassRightButton.click(function () {
         self.triggerTrueBypass("Right", !$(this).hasClass("bypassed"))
     })
-    elements.bufferSizeButton.click(function () {
-        var newsize
-        if ($(this).text() == "128 frames") {
-            newsize = '256'
-        } else {
-            newsize = '128'
-        }
-
-        $.ajax({
-            url: '/set_buffersize/' + newsize,
-            method: 'POST',
-            cache: false,
-            success: function (resp) {
-                if (! resp.ok) {
-                    new Bug("Couldn't set new buffer size")
-                }
-            },
-            error: function () {
-                new Bug("Communication failure")
-            },
+    if (PLATFORM === "bridge") {
+        // Bridge mode: keep as informational label only.
+        elements.bufferSizeButton.css({
+            'cursor': 'default',
+            'pointer-events': 'none',
         })
-    })
+        elements.bufferSizeButton.off('click mousedown mouseup touchstart touchend').on('click mousedown mouseup touchstart touchend', function (e) {
+            e.stopImmediatePropagation()
+            e.preventDefault()
+            return false
+        })
+    } else {
+        elements.bufferSizeButton.click(function () {
+            var newsize
+            if ($(this).text() == "128 frames") {
+                newsize = '256'
+            } else {
+                newsize = '128'
+            }
+
+            $.ajax({
+                url: '/set_buffersize/' + newsize,
+                method: 'POST',
+                cache: false,
+                success: function (resp) {
+                    if (! resp.ok) {
+                        new Bug("Couldn't set new buffer size")
+                    }
+                },
+                error: function () {
+                    new Bug("Communication failure")
+                },
+            })
+        })
+    }
     elements.xrunsButton.click(function () {
         if (cached_xruns == 0) {
             return
@@ -1120,21 +1166,34 @@ function Desktop(elements) {
             }
         })
     })
-    elements.cpuStatsButton.click(function () {
-        $.ajax({
-            url: '/switch_cpu_freq/',
-            method: 'POST',
-            cache: false,
-            success: function (ok) {
-                if (! ok) {
-                    new Bug("Couldn't set new cpu frequency")
-                }
-            },
-            error: function () {
-                new Bug("Communication failure")
-            },
+    if (PLATFORM === "bridge") {
+        // Bridge mode: keep as informational label only.
+        elements.cpuStatsButton.css({
+            'cursor': 'default',
+            'pointer-events': 'none',
         })
-    })
+        elements.cpuStatsButton.off('click mousedown mouseup touchstart touchend').on('click mousedown mouseup touchstart touchend', function (e) {
+            e.stopImmediatePropagation()
+            e.preventDefault()
+            return false
+        })
+    } else {
+        elements.cpuStatsButton.click(function () {
+            $.ajax({
+                url: '/switch_cpu_freq/',
+                method: 'POST',
+                cache: false,
+                success: function (ok) {
+                    if (! ok) {
+                        new Bug("Couldn't set new cpu frequency")
+                    }
+                },
+                error: function () {
+                    new Bug("Communication failure")
+                },
+            })
+        })
+    }
 
     elements.shareButton.click(function () {
         var share = function () {

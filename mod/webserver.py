@@ -1786,17 +1786,24 @@ class TemplateHandler(TimelessRequestHandler):
             fullpbname += " - " + prname
 
         hwdesc = get_hardware_descriptor()
+        is_bridge = hwdesc.get('platform', "") == "bridge"
+        cloud_url = "" if is_bridge else CLOUD_HTTP_ADDRESS
+        cloud_labs_url = "" if is_bridge else CLOUD_LABS_HTTP_ADDRESS
+        plugins_url = "" if is_bridge else PLUGINS_HTTP_ADDRESS
+        pedalboards_url = "" if is_bridge else PEDALBOARDS_HTTP_ADDRESS
+        pedalboards_labs_url = "" if is_bridge else PEDALBOARDS_LABS_HTTP_ADDRESS
+        controlchain_url = "" if is_bridge else CONTROLCHAIN_HTTP_ADDRESS
 
         context = {
             'default_icon_template': default_icon_template,
             'default_settings_template': default_settings_template,
             'default_pedalboard': mod_squeeze(DEFAULT_PEDALBOARD),
-            'cloud_url': CLOUD_HTTP_ADDRESS,
-            'cloud_labs_url': CLOUD_LABS_HTTP_ADDRESS,
-            'plugins_url': PLUGINS_HTTP_ADDRESS,
-            'pedalboards_url': PEDALBOARDS_HTTP_ADDRESS,
-            'pedalboards_labs_url': PEDALBOARDS_LABS_HTTP_ADDRESS,
-            'controlchain_url': CONTROLCHAIN_HTTP_ADDRESS,
+            'cloud_url': cloud_url,
+            'cloud_labs_url': cloud_labs_url,
+            'plugins_url': plugins_url,
+            'pedalboards_url': pedalboards_url,
+            'pedalboards_labs_url': pedalboards_labs_url,
+            'controlchain_url': controlchain_url,
             'hardware_profile': b64encode(json.dumps(SESSION.get_hardware_actuators()).encode("utf-8")),
             'version': self.get_argument('v'),
             'bin_compat': hwdesc.get('bin-compat', "Unknown"),
@@ -1812,7 +1819,7 @@ class TemplateHandler(TimelessRequestHandler):
             'titleblend': '' if SESSION.host.pedalboard_name else 'blend',
             'dev_api_class': 'dev_api' if DEV_API else '',
             'using_desktop': 'true' if DESKTOP else 'false',
-            'using_mod': 'true' if DEVICE_KEY and hwdesc.get('platform', None) is not None else 'false',
+            'using_mod': 'true' if (not is_bridge and DEVICE_KEY and hwdesc.get('platform', None) is not None) else 'false',
             'user_name': mod_squeeze(user_id.get("name", "")),
             'user_email': mod_squeeze(user_id.get("email", "")),
             'favorites': json.dumps(gState.favorites),
@@ -1861,10 +1868,11 @@ class TemplateHandler(TimelessRequestHandler):
     def settings(self):
         hwdesc = get_hardware_descriptor()
         prefs = safe_json_load(PREFERENCES_JSON_FILE, dict)
+        is_bridge = hwdesc.get('platform', "") == "bridge"
 
         context = {
-            'cloud_url': CLOUD_HTTP_ADDRESS,
-            'controlchain_url': CONTROLCHAIN_HTTP_ADDRESS,
+            'cloud_url': "" if is_bridge else CLOUD_HTTP_ADDRESS,
+            'controlchain_url': "" if is_bridge else CONTROLCHAIN_HTTP_ADDRESS,
             'version': self.get_argument('v'),
             'hmi_eeprom': 'true' if hwdesc.get('hmi_eeprom', False) else 'false',
             'preferences': json.dumps(prefs),
@@ -1944,6 +1952,15 @@ class TrueBypass(JsonRequestHandler):
 class SetBufferSize(JsonRequestHandler):
     def post(self, size):
         size = int(size)
+        hwdesc = get_hardware_descriptor()
+
+        # Bridge mode: show informational value only, do not attempt runtime reconfiguration.
+        if hwdesc.get('platform', "") == "bridge":
+            self.write({
+                'ok': True,
+                'size': get_jack_buffer_size(),
+            })
+            return
 
         # If running a real MOD, save this setting for next boot
         if IMAGE_VERSION is not None:
@@ -1965,10 +1982,21 @@ class ResetXruns(JsonRequestHandler):
 
 class SwitchCpuFreq(JsonRequestHandler):
     def post(self):
-        with open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_frequencies", 'r') as fh:
-            freqs = fh.read().strip().split(" ")
-        with open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq", 'r') as fh:
-            cur_freq = fh.read().strip()
+        hwdesc = get_hardware_descriptor()
+
+        # Bridge mode: treat as informational-only control.
+        if hwdesc.get('platform', "") == "bridge":
+            return self.write(True)
+
+        try:
+            with open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_frequencies", 'r') as fh:
+                freqs = fh.read().strip().split(" ")
+            with open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq", 'r') as fh:
+                cur_freq = fh.read().strip()
+        except (FileNotFoundError, PermissionError):
+            # Desktop/test systems often do not expose these cpufreq controls.
+            return self.write(False)
+
         if len(freqs) == 0 or cur_freq not in freqs:
             return self.write(False)
         index = freqs.index(cur_freq) + 1
@@ -2065,8 +2093,14 @@ class AuthNonce(JsonRequestHandler):
         if token is None:
             message = {}
         else:
-            data    = json.loads(self.request.body.decode())
-            message = token.create_token_message(data['nonce'])
+            try:
+                data = json.loads(self.request.body.decode())
+                nonce = data['nonce']
+                message = token.create_token_message(nonce)
+            except Exception as e:
+                # Missing/invalid device or server key should not crash the UI.
+                print("WARNING: failed to create auth nonce message: %s" % e)
+                message = {}
 
         self.write(message)
 
